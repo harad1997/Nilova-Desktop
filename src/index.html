@@ -766,15 +766,11 @@ select:focus,input.tin:focus{outline:none;border-color:var(--accent-edge)}
           </div>
           <div class="set">
             <div class="t"><div class="a">فونت برنامه</div><div class="b">اگر فونت روی ویندوز نصب نباشد، پیش‌فرض جایگزین می‌شود</div></div>
-            <select id="fontSel">
-              <option value='"Segoe UI",Tahoma,sans-serif'>Segoe UI</option>
-              <option value='Tahoma,sans-serif'>Tahoma</option>
-              <option value='"Iran Sans","IRANSans",Tahoma,sans-serif'>ایران‌سنس</option>
-              <option value='Vazirmatn,Vazir,Tahoma,sans-serif'>وزیر</option>
-              <option value='"Sahel",Tahoma,sans-serif'>ساحل</option>
-              <option value='Calibri,Tahoma,sans-serif'>Calibri</option>
-              <option value='"Segoe UI Variable","Segoe UI",Tahoma,sans-serif'>Segoe UI Variable</option>
-            </select>
+           <select id="fontSel">
+  <option value='"Segoe UI",Tahoma,sans-serif'>Segoe UI</option>
+  <option value='Tahoma,sans-serif'>Tahoma</option>
+  <option value='Calibri,Tahoma,sans-serif'>Calibri</option>
+ </select>
           </div>
           <div class="set">
             <div class="t"><div class="a">اندازهٔ فونت</div><div class="b">اندازهٔ کل نوشته‌های برنامه</div></div>
@@ -791,8 +787,8 @@ select:focus,input.tin:focus{outline:none;border-color:var(--accent-edge)}
             <div class="t"><div class="a">ضخامت نوشته</div><div class="b">برای صفحه‌نمایش‌های کم‌کنتراست مفید است</div></div>
             <select id="weightSel">
               <option value="400">نازک</option>
-              <option value="450" selected>معمولی</option>
-              <option value="500">نیمه‌ضخیم</option>
+              <option value="500" selected>معمولی</option>
+              <option value="600">نیمه‌ضخیم</option>
             </select>
           </div>
           <div class="set">
@@ -1279,15 +1275,30 @@ function toggleLan(el){
 }
 
 /* ---------- فونت ---------- */
-document.getElementById("fontSel").addEventListener("change",e=>{
-  document.body.style.fontFamily = e.target.value;
-});
-document.getElementById("sizeSel").addEventListener("change",e=>{
-  document.body.style.fontSize = e.target.value + "px";
-});
-document.getElementById("weightSel").addEventListener("change",e=>{
-  document.body.style.fontWeight = e.target.value;
-});
+/* ---------- تنظیمات ظاهر ---------- */
+const fontSel = document.getElementById("fontSel");
+const sizeSel = document.getElementById("sizeSel");
+const weightSel = document.getElementById("weightSel");
+
+function applySettings() {
+  let styleTag = document.getElementById("force-style");
+  if (!styleTag) {
+    styleTag = document.createElement("style");
+    styleTag.id = "force-style";
+    document.head.appendChild(styleTag);
+  }
+
+  let font = fontSel.value;
+  let weight = weightSel.value;
+  styleTag.innerHTML = "* { font-family: " + font + " !important; font-weight: " + weight + " !important; }";
+
+  let size = Number(sizeSel.value);
+  document.body.style.zoom = size / 14;
+}
+
+fontSel.addEventListener("change", applySettings);
+sizeSel.addEventListener("change", applySettings);
+weightSel.addEventListener("change", applySettings);
 
 /* ---------- حالت اتصال ---------- */
 const MODE_TXT = [
