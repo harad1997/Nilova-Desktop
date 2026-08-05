@@ -30,17 +30,22 @@ jobs:
         run: |
           Invoke-WebRequest -Uri "https://github.com/XTLS/Xray-core/releases/download/v26.7.28/Xray-windows-64.zip" -OutFile "xray.zip"
           Expand-Archive -Path "xray.zip" -DestinationPath "xray-extract" -Force
-          Copy-Item "xray-extract\xray.exe" "src-tauri\resources\xray.exe"
+          Copy-Item "xray-extract\xray.exe" "src-tauri\target\release\xray.exe"
           Remove-Item "xray.zip"
 
       - name: ساخت برنامه نیلووا
         run: npm run tauri -- build
 
+      - name: کنار هم قرار دادن فایلها
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Path "Nilova-desktop" -Force
+          Copy-Item "src-tauri\target\release\Nilova-desktop.exe" "Nilova-desktop\"
+          Copy-Item "src-tauri\target\release\xray.exe" "Nilova-desktop\"
+
       - name: ذخیره فایل خروجی
         uses: actions/upload-artifact@v4
         with:
           name: Nilova-Windows
-          path: |
-            src-tauri/target/release/Nilova-desktop.exe
-            src-tauri/resources/xray.exe
+          path: Nilova-desktop/*
           if-no-files-found: error
