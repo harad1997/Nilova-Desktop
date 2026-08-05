@@ -28,7 +28,7 @@ jobs:
       - name: دانلود هسته Xray
         shell: powershell
         run: |
-          Invoke-WebRequest -Uri "https://github.com/XTLS/Xray-core/releases/download/v25.6.9/Xray-windows-64.zip" -OutFile "xray.zip"
+          Invoke-WebRequest -Uri "https://github.com/XTLS/Xray-core/releases/download/v26.7.28/Xray-windows-64.zip" -OutFile "xray.zip"
           Expand-Archive -Path "xray.zip" -DestinationPath "xray-extract" -Force
           Copy-Item "xray-extract\xray.exe" "src-tauri\resources\xray.exe"
           Remove-Item "xray.zip"
