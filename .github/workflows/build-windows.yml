@@ -40,5 +40,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Nilova-Windows
-          path: src-tauri/target/release/nilova-desktop.exe
+          path: src-tauri/target/release/Nilova-desktop.exe
           if-no-files-found: error
