@@ -14,15 +14,15 @@ jobs:
       - name: دریافت کد پروژه
         uses: actions/checkout@v4
 
-      - name: آماده‌سازی Node.js
+      - name: آمادهسازی Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - name: آماده‌سازی Rust
+      - name: آمادهسازی Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: نصب بسته‌ها
+      - name: نصب بستهها
         run: npm install
 
       - name: ساخت برنامه نیلووا
@@ -32,5 +32,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Nilova-Windows
-          path: src-tauri/target/release/bundle/**
+          path: src-tauri/target/release/nilova-desktop.exe
           if-no-files-found: error
