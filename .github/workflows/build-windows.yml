@@ -1,0 +1,36 @@
+name: Build Nilova for Windows
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: دریافت کد پروژه
+        uses: actions/checkout@v4
+
+      - name: آماده‌سازی Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: آماده‌سازی Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: نصب بسته‌ها
+        run: npm install
+
+      - name: ساخت برنامه نیلووا
+        run: npm run tauri -- build
+
+      - name: ذخیره فایل خروجی
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nilova-Windows
+          path: src-tauri/target/release/bundle/**
+          if-no-files-found: error
