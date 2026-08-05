@@ -33,12 +33,14 @@ jobs:
           Copy-Item "xray-extract\xray.exe" "src-tauri\resources\xray.exe"
           Remove-Item "xray.zip"
 
-      - name: ساخت برنامه نیلوا
+      - name: ساخت برنامه نیلووا
         run: npm run tauri -- build
 
       - name: ذخیره فایل خروجی
         uses: actions/upload-artifact@v4
         with:
           name: Nilova-Windows
-          path: src-tauri/target/release/Nilova-desktop.exe
+          path: |
+            src-tauri/target/release/Nilova-desktop.exe
+            src-tauri/resources/xray.exe
           if-no-files-found: error
