@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ClashRay — طرح رادار</title>
+<title>Nilova — طرح رادار</title>
 <style>
 /* ==================== تم‌ها ==================== */
 [data-theme="dark"]{
@@ -58,9 +58,24 @@ body{
   display:flex;flex-direction:column;align-items:center;padding:14px 0;gap:4px;flex-shrink:0;
 }
 .brand{
-  width:38px;height:38px;border-radius:10px;margin-bottom:18px;
-  background:linear-gradient(150deg,var(--accent),var(--teal));
-  display:grid;place-items:center;font-weight:800;font-size:15px;color:var(--accent-ink);
+  width:54px;height:54px;border-radius:15px;margin-bottom:18px;
+  background:linear-gradient(150deg,#182246 0%,#0f2b3c 100%);
+  border:1px solid #2b3a63;
+  display:grid;place-items:center;overflow:hidden;cursor:pointer;
+  box-shadow:0 2px 8px rgba(6,18,40,.35);
+  transition:transform .22s cubic-bezier(.2,.8,.3,1), box-shadow .22s, border-color .22s;
+}
+.brand:hover{
+  transform:translateY(-3px) scale(1.06);
+  border-color:#06B6D4;
+  box-shadow:0 10px 22px rgba(6,182,212,.34), 0 0 0 3px rgba(79,70,229,.20);
+}
+.brand:active{transform:translateY(-1px) scale(1.02)}
+.brand svg{width:40px;height:40px;display:block;transition:transform .22s cubic-bezier(.2,.8,.3,1)}
+.brand:hover svg{transform:scale(1.08)}
+.wordmark{
+  background:linear-gradient(135deg,#4F46E5 0%,#06B6D4 62%,#A5F3FC 100%);
+  -webkit-background-clip:text;background-clip:text;color:transparent;
 }
 .nav{
   width:60px;padding:9px 0;border-radius:9px;cursor:pointer;
@@ -372,7 +387,23 @@ select:focus,input.tin:focus{outline:none;border-color:var(--accent-edge)}
 
   <!-- ==================== ناوبری ==================== -->
   <nav class="rail">
-    <div class="brand">V</div>
+    <div class="brand" title="Nilova">
+      <svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" aria-label="Nilova">
+        <defs>
+          <linearGradient id="nilovaFlow" x1="160" y1="352" x2="352" y2="120" gradientUnits="userSpaceOnUse">
+            <stop stop-color="#4F46E5"/><stop offset=".6" stop-color="#06B6D4"/><stop offset="1" stop-color="#A5F3FC"/>
+          </linearGradient>
+          <filter id="nilovaGlow" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="12" result="b"/>
+            <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+          </filter>
+        </defs>
+        <line x1="112" y1="256" x2="400" y2="256" stroke="#1E293B" stroke-width="10" stroke-dasharray="16 16" stroke-linecap="round"/>
+        <path d="M160 352 V160 L216 216" fill="none" stroke="url(#nilovaFlow)" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M296 296 L352 352 V120" fill="none" stroke="url(#nilovaFlow)" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="352" cy="120" r="16" fill="#FFFFFF" filter="url(#nilovaGlow)"/>
+      </svg>
+    </div>
     <div class="nav on" data-go="dash">
       <svg viewBox="0 0 24 24"><path d="M4 11l8-7 8 7"/><path d="M6 10v10h12V10"/></svg>داشبورد
     </div>
@@ -397,7 +428,7 @@ select:focus,input.tin:focus{outline:none;border-color:var(--accent-edge)}
 
     <!-- ==================== نوار بالا ==================== -->
     <div class="titlebar">
-      <span class="name">ClashRay</span>
+      <span class="name"><span class="wordmark">Nilova</span></span>
       <span class="crumb" id="crumb">داشبورد</span>
       <div class="themes">
         <span class="lb">پوسته</span>
@@ -406,7 +437,6 @@ select:focus,input.tin:focus{outline:none;border-color:var(--accent-edge)}
         <span class="sw"    data-theme="gray"  title="خاکستری"   style="background:#4b545c"></span>
         <span class="sw"    data-theme="turq"  title="فیروزه‌ای" style="background:#0f7f72"></span>
       </div>
-      <span class="win">─ ▢ ✕</span>
     </div>
 
     <!-- ==================== داشبورد ==================== -->
@@ -611,21 +641,21 @@ select:focus,input.tin:focus{outline:none;border-color:var(--accent-edge)}
         <div class="log">
           <div><b>[14:02:11]</b> core started — mihomo v1.19.2 (windows/amd64)</div>
           <div><b>[14:02:11]</b> loading profile "Fardad · مرزبان" — 24 proxies</div>
-          <div><b>[14:02:12]</b> proxy group ClashRay: 24 members</div>
+          <div><b>[14:02:12]</b> proxy group Nilova: 24 members</div>
           <div><b>[14:02:12]</b> system proxy set to 127.0.0.1:10808</div>
           <div><b>[14:02:13]</b> url-test Auto: nl-01.edge.net <u>86ms</u></div>
           <div><b>[14:02:13]</b> url-test Auto: de-04.edge.net <u>94ms</u></div>
           <div><b>[14:02:14]</b> url-test Auto: sg-05.edge.net <s>timeout</s></div>
           <div><b>[14:02:14]</b> selected Netherlands · Amsterdam</div>
-          <div><b>[14:03:02]</b> [TCP] api.github.com:443 → ClashRay</div>
-          <div><b>[14:03:02]</b> [TCP] fonts.gstatic.com:443 → ClashRay</div>
+          <div><b>[14:03:02]</b> [TCP] api.github.com:443 → Nilova</div>
+          <div><b>[14:03:02]</b> [TCP] fonts.gstatic.com:443 → Nilova</div>
           <div><b>[14:03:05]</b> [TCP] digikala.com:443 → DIRECT (GEOIP,ir)</div>
-          <div><b>[14:03:07]</b> [UDP] 8.8.8.8:53 → ClashRay</div>
+          <div><b>[14:03:07]</b> [UDP] 8.8.8.8:53 → Nilova</div>
           <div><b>[14:03:19]</b> [TCP] ads.doubleclick.net:443 → <s>REJECT</s></div>
-          <div><b>[14:04:41]</b> [TCP] youtube.com:443 → ClashRay</div>
+          <div><b>[14:04:41]</b> [TCP] youtube.com:443 → Nilova</div>
           <div><b>[14:05:03]</b> subscription "Fardad · مرزبان" updated — 24 proxies</div>
           <div><b>[14:06:22]</b> speedtest fast.com — down <u>62 Mbps</u> up <u>18 Mbps</u></div>
-          <div><b>[14:08:10]</b> [TCP] cdn.jsdelivr.net:443 → ClashRay</div>
+          <div><b>[14:08:10]</b> [TCP] cdn.jsdelivr.net:443 → Nilova</div>
           <div><b>[14:09:44]</b> health check passed — 24/31 alive</div>
         </div>
       </div>
@@ -792,14 +822,7 @@ select:focus,input.tin:focus{outline:none;border-color:var(--accent-edge)}
         </div>
       </div>
     </div>
-
-    <div class="foot">
-      <span class="ok">● هسته در حال اجرا</span>
-      <span>حالت: قانون‌محور</span>
-      <span>پورت: 10808</span>
-      <span style="margin-right:auto">نسخهٔ ۱٫۰٫۰</span>
-    </div>
-  </div>
+      </div>
 </div>
 
 <script>
@@ -1209,10 +1232,10 @@ const RULES = [
   ["GEOIP","private","DIRECT","dir"],
   ["DOMAIN-KEYWORD","doubleclick","REJECT","rej"],
   ["DOMAIN-SUFFIX","googlesyndication.com","REJECT","rej"],
-  ["DOMAIN-SUFFIX","github.com","ClashRay","prox"],
-  ["DOMAIN-SUFFIX","openai.com","ClashRay","prox"],
-  ["PROCESS-NAME","Telegram.exe","ClashRay","prox"],
-  ["MATCH","","ClashRay","prox"],
+  ["DOMAIN-SUFFIX","github.com","Nilova","prox"],
+  ["DOMAIN-SUFFIX","openai.com","Nilova","prox"],
+  ["PROCESS-NAME","Telegram.exe","Nilova","prox"],
+  ["MATCH","","Nilova","prox"],
 ];
 document.getElementById("ruleRows").innerHTML = RULES.map((r,i)=>`
   <div class="rule">
