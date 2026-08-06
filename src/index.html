@@ -951,8 +951,8 @@ function draw(which){
   const q    = (sEl ? sEl.value : "").trim().toLowerCase();
 
   let list = SERVERS.slice();
-  if(which === "dash"){
-    list = list.filter(s => s.sub === activeSub);
+    if(which === "dash"){
+    list = list.filter(s => s.sub === activeSub || s.sub === "manual");
   }else{
     const pick = document.getElementById("allSub").value;
     if(pick !== "*") list = list.filter(s => s.sub === pick);
