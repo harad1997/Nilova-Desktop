@@ -2,9 +2,9 @@
 
 use std::fs;
 use std::io::Write;
-use std::net::TcpListener;
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command};
+use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -21,6 +21,12 @@ use winreg::HKCU;
 
 /// اجرای فرایندهای فرزند بدون باز شدن پنجرهٔ کنسول.
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+fn silent(cmd: &mut Command) -> &mut Command {
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    cmd
+}
 
 /* ================= وضعیت برنامه ================= */
 
@@ -76,7 +82,26 @@ const INTERNET_SETTINGS: &str =
 
 /* ================= ساخت پیکربندی ================= */
 
-fn parse_vless(link: &str) -> Option<(String, String, String, String, String, String)> {
+/// تمام پارامترهای یک لینک VLESS را استخراج می‌کند (tls / reality / ws / grpc).
+struct VlessInfo {
+    id: String,
+    address: String,
+    port: String,
+    network: String,
+    path: String,
+    host: String,
+    security: String,
+    sni: String,
+    fp: String,
+    pbk: String,
+    sid: String,
+    spx: String,
+    flow: String,
+    alpn: String,
+    service_name: String,
+}
+
+fn parse_vless(link: &str) -> Option<VlessInfo> {
     let rest = link.strip_prefix("vless://")?;
     let main = rest.split('#').next()?;
     let at = main.find('@')?;
@@ -90,57 +115,137 @@ fn parse_vless(link: &str) -> Option<(String, String, String, String, String, St
     let colon = host_port.rfind(':')?;
     let address = host_port[..colon].to_string();
     let port = host_port[colon + 1..].to_string();
-    let mut path = String::new();
-    let mut host = String::new();
-    let mut ty = String::from("tcp");
-    let mut _security = String::new();
+
+    let mut info = VlessInfo {
+        id,
+        address,
+        port,
+        network: String::from("tcp"),
+        path: String::new(),
+        host: String::new(),
+        security: String::new(),
+        sni: String::new(),
+        fp: String::new(),
+        pbk: String::new(),
+        sid: String::new(),
+        spx: String::new(),
+        flow: String::new(),
+        alpn: String::new(),
+        service_name: String::new(),
+    };
     for pair in query.split('&') {
         let mut it = pair.splitn(2, '=');
         let k = it.next().unwrap_or("");
         let v = it.next().unwrap_or("");
         match k {
-            "path" => path = v.replace("%2F", "/").replace("%40", "@"),
-            "host" => host = v.replace("%40", "@"),
-            "type" => ty = v.to_string(),
-            "security" => _security = v.to_string(),
+            "path" => info.path = v.replace("%2F", "/").replace("%40", "@"),
+            "host" => info.host = v.replace("%40", "@"),
+            "type" => info.network = v.to_string(),
+            "security" => info.security = v.to_string(),
+            "sni" => info.sni = v.to_string(),
+            "fp" => info.fp = v.to_string(),
+            "pbk" => info.pbk = v.to_string(),
+            "sid" => info.sid = v.to_string(),
+            "spx" => info.spx = v.to_string(),
+            "flow" => info.flow = v.to_string(),
+            "alpn" => info.alpn = v.to_string(),
+            "serviceName" => info.service_name = v.replace("%2F", "/"),
             _ => {}
         }
     }
-    Some((id, address, port, ty, path, host))
+    Some(info)
 }
 
-/// خروجی VLESS را از لینک می‌سازد (مشترک بین حالت پروکسی و TUN).
+/// خروجی VLESS را با تمام تنظیمات امنیتی و انتقال می‌سازد (مشترک پروکسی و TUN).
 fn build_outbound(link: &str) -> Option<serde_json::Value> {
-    let (id, address, port, ty, path, host) = parse_vless(link)?;
-    let mut stream_settings = serde_json::Map::new();
-    stream_settings.insert("network".into(), json!(ty));
-    if ty == "ws" {
-        let mut ws = serde_json::Map::new();
-        if !path.is_empty() {
-            ws.insert("path".into(), json!(path));
+    let i = parse_vless(link)?;
+
+    let mut stream = serde_json::Map::new();
+    stream.insert("network".into(), json!(i.network));
+    let security = if i.security.is_empty() { "none" } else { i.security.as_str() };
+    stream.insert("security".into(), json!(security));
+
+    if i.security == "tls" {
+        let mut tls = serde_json::Map::new();
+        let server_name = if !i.sni.is_empty() {
+            i.sni.clone()
+        } else if !i.host.is_empty() {
+            i.host.clone()
+        } else {
+            i.address.clone()
+        };
+        tls.insert("serverName".into(), json!(server_name));
+        if !i.fp.is_empty() {
+            tls.insert("fingerprint".into(), json!(i.fp));
         }
-        if !host.is_empty() {
-            ws.insert("headers".into(), json!({ "Host": host }));
+        if !i.alpn.is_empty() {
+            let alpn: Vec<&str> = i
+                .alpn
+                .split(',')
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .collect();
+            tls.insert("alpn".into(), json!(alpn));
         }
-        stream_settings.insert("wsSettings".into(), json!(ws));
+        stream.insert("tlsSettings".into(), json!(tls));
     }
+    if i.security == "reality" {
+        let mut rt = serde_json::Map::new();
+        let server_name = if !i.sni.is_empty() { i.sni.clone() } else { i.host.clone() };
+        if !server_name.is_empty() {
+            rt.insert("serverName".into(), json!(server_name));
+        }
+        if !i.fp.is_empty() {
+            rt.insert("fingerprint".into(), json!(i.fp));
+        }
+        if !i.pbk.is_empty() {
+            rt.insert("publicKey".into(), json!(i.pbk));
+        }
+        if !i.sid.is_empty() {
+            rt.insert("shortId".into(), json!(i.sid));
+        }
+        if !i.spx.is_empty() {
+            rt.insert("spiderX".into(), json!(i.spx));
+        }
+        stream.insert("realitySettings".into(), json!(rt));
+    }
+    if i.network == "ws" {
+        let mut ws = serde_json::Map::new();
+        if !i.path.is_empty() {
+            ws.insert("path".into(), json!(i.path));
+        }
+        if !i.host.is_empty() {
+            ws.insert("headers".into(), json!({ "Host": i.host }));
+        }
+        stream.insert("wsSettings".into(), json!(ws));
+    }
+    if i.network == "grpc" {
+        let mut gr = serde_json::Map::new();
+        if !i.service_name.is_empty() {
+            gr.insert("serviceName".into(), json!(i.service_name));
+        }
+        stream.insert("grpcSettings".into(), json!(gr));
+    }
+
+    let mut user = serde_json::Map::new();
+    user.insert("id".into(), json!(i.id));
+    user.insert("encryption".into(), json!("none"));
+    if !i.flow.is_empty() {
+        user.insert("flow".into(), json!(i.flow));
+    }
+
     Some(json!({
         "protocol": "vless",
         "settings": {
             "vnext": [
                 {
-                    "address": address,
-                    "port": port,
-                    "users": [
-                        {
-                            "id": id,
-                            "encryption": "none"
-                        }
-                    ]
+                    "address": i.address,
+                    "port": i.port,
+                    "users": [ user ]
                 }
             ]
         },
-        "streamSettings": stream_settings
+        "streamSettings": stream
     }))
 }
 
@@ -270,7 +375,7 @@ fn set_proxy(on: bool) -> Result<(), String> {
 }
 
 fn is_admin() -> bool {
-    match Command::new("whoami").arg("/groups").output() {
+    match silent(Command::new("whoami")).arg("/groups").output() {
         Ok(o) => String::from_utf8_lossy(&o.stdout).contains("S-1-16-12288"),
         Err(_) => false,
     }
@@ -293,9 +398,51 @@ fn spawn_xray(config_path: &Path) -> Result<Child, String> {
     }
     let mut cmd = Command::new(&xray);
     cmd.arg("-c").arg(config_path);
-    #[cfg(windows)]
-    cmd.creation_flags(CREATE_NO_WINDOW);
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::piped());
+    silent(&mut cmd);
     cmd.spawn().map_err(|e| format!("خطا در اجرای هسته: {}", e))
+}
+
+/// آیا پورت محلی به اتصال پاسخ می‌دهد؟
+fn tcp_ready(port: u16) -> bool {
+    let addr: SocketAddr = match format!("127.0.0.1:{}", port).parse() {
+        Ok(a) => a,
+        Err(_) => return false,
+    };
+    TcpStream::connect_timeout(&addr, Duration::from_millis(250)).is_ok()
+}
+
+/// منتظر بالا آمدن پورت محلی می‌ماند.
+fn wait_port(port: u16, timeout: Duration) -> bool {
+    let start = Instant::now();
+    while start.elapsed() < timeout {
+        if tcp_ready(port) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    false
+}
+
+/// اگر هسته بعد از شروع از کار افتاد، پیام خطای آن را از stderr می‌خواند.
+fn child_error(mut child: Child) -> String {
+    let mut reason = "هسته بالا نیامد؛ احتمالاً کانفیگ نامعتبر است".to_string();
+    match child.try_wait() {
+        Ok(Some(_)) => {
+            if let Ok(out) = child.wait_with_output() {
+                let msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                if !msg.is_empty() {
+                    reason = msg;
+                }
+            }
+        }
+        _ => {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+    reason
 }
 
 fn start_core(config_json: &str, state: State<'_, AppState>, with_proxy: bool) -> Result<(), String> {
@@ -315,13 +462,23 @@ fn start_core(config_json: &str, state: State<'_, AppState>, with_proxy: bool) -
         return Err("از قبل متصل است".into());
     }
 
-    let child = spawn_xray(&config_path)?;
+    let mut child = spawn_xray(&config_path)?;
+
+    // صبر کن تا هسته واقعاً بالا بیاید (پورت سرویس آمار ۹۰۹۱)
+    if !wait_port(9091, Duration::from_secs(6)) {
+        let reason = child_error(child);
+        return Err(format!("خطا در شروع اتصال: {}", reason));
+    }
+    // اگر هسته بعد از بالا آمدن پورت از کار افتاده باشد، اتصال را رد کن
+    if let Ok(Some(_)) = child.try_wait() {
+        let reason = child_error(child);
+        return Err(format!("خطا در شروع اتصال: {}", reason));
+    }
 
     if with_proxy {
         if let Err(e) = set_proxy(true) {
-            let mut c = child;
-            let _ = c.kill();
-            let _ = c.wait();
+            let _ = child.kill();
+            let _ = child.wait();
             return Err(e);
         }
     }
@@ -332,9 +489,11 @@ fn start_core(config_json: &str, state: State<'_, AppState>, with_proxy: bool) -
 
 /* ================= ابزارهای اندازه‌گیری (از طریق curl) ================= */
 
-/// یک فرمان curl را اجرا می‌کند و (موفقیت، خروجی) را برمی‌گرداند.
+/// یک فرمان curl را بدون پنجره اجرا می‌کند و (موفقیت، خروجی) را برمی‌گرداند.
 fn curl_run(args: &[String]) -> Result<(bool, String), String> {
-    let out = Command::new("curl")
+    let mut cmd = Command::new("curl");
+    silent(&mut cmd);
+    let out = cmd
         .args(args)
         .output()
         .map_err(|e| format!("ابزار curl (curl.exe) در دسترس نیست: {}", e))?;
@@ -396,8 +555,7 @@ fn run_test_one(link: &str) -> Result<serde_json::Value, String> {
     let tmp = std::env::temp_dir().join("nilova_test.json");
     fs::write(&tmp, config.to_string()).map_err(|e| e.to_string())?;
 
-    let child = spawn_xray(&tmp);
-    let mut child = match child {
+    let mut child = match spawn_xray(&tmp) {
         Ok(c) => c,
         Err(e) => {
             let _ = fs::remove_file(&tmp);
@@ -405,14 +563,22 @@ fn run_test_one(link: &str) -> Result<serde_json::Value, String> {
         }
     };
 
-    // به هسته فرصت بده بالا بیاید (چند تلاش کوتاه تا روی سیستم‌های کند هم دقیق باشد)
+    // صبر کن تا پورت محلی بالا بیاید؛ اگر هسته از کار افتاد دلیلش را بگو
+    if !wait_port(port, Duration::from_secs(6)) {
+        let reason = child_error(child);
+        let _ = fs::remove_file(&tmp);
+        return Ok(json!({ "ok": false, "ms": null, "err": reason }));
+    }
+
+    // سه پینگ واقعی؛ بهترین نتیجه ملاک است
     let proxy = format!("http://127.0.0.1:{}", port);
-    let mut res = Err("منتظر بالا آمدن هسته".to_string());
+    let mut best: Option<f64> = None;
     for _ in 0..3 {
-        std::thread::sleep(Duration::from_millis(400));
-        if let Ok(ms) = rtt_ms(Some(&proxy), 3) {
-            res = Ok(ms);
-            break;
+        if let Ok(ms) = rtt_ms(Some(&proxy), 4) {
+            best = Some(match best {
+                Some(b) => b.min(ms),
+                None => ms,
+            });
         }
     }
 
@@ -420,9 +586,13 @@ fn run_test_one(link: &str) -> Result<serde_json::Value, String> {
     let _ = child.wait();
     let _ = fs::remove_file(&tmp);
 
-    match res {
-        Ok(ms) => Ok(json!({ "ok": true, "ms": ms.round() as u64 })),
-        Err(_) => Ok(json!({ "ok": false, "ms": null })),
+    match best {
+        Some(ms) => Ok(json!({ "ok": true, "ms": ms.round() as u64, "err": null })),
+        None => Ok(json!({
+            "ok": false,
+            "ms": null,
+            "err": "اتصال از داخل کانفیگ برقرار نشد؛ سرور در دسترس نیست یا کانفیگ ناقص است"
+        })),
     }
 }
 
@@ -549,10 +719,10 @@ fn save_stats(a: &TrafficAcc) {
     let _ = fs::write(stats_file(), v.to_string());
 }
 
-/// تاریخ امروز به شکل میلادی — از PowerShell (بدون وابستگی جدید).
+/// تاریخ امروز به شکل میلادی — از PowerShell (بدون وابستگی جدید، بدون پنجره).
 fn date_str(format: &str) -> String {
     let ps_cmd = format!("Get-Date -Format '{}'", format);
-    match Command::new("powershell")
+    match silent(Command::new("powershell"))
         .args(["-NoProfile", "-Command", ps_cmd.as_str()])
         .output()
     {
@@ -700,14 +870,13 @@ fn run_tun(link: String, state: State<'_, AppState>) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn stop_xray(state: State<'_, AppState>) -> Result<String, String> {
+async fn stop_xray(state: State<'_, AppState>) -> Result<String, String> {
     let mut guard = state.child.lock().map_err(|e| e.to_string())?;
-
     if let Some(mut child) = guard.take() {
         let _ = child.kill();
         let _ = child.wait();
     }
-
+    drop(guard);
     let _ = set_proxy(false);
     Ok("اتصال قطع شد؛ پروکسی سیستم ویندوز خاموش شد".into())
 }
@@ -740,7 +909,7 @@ async fn speed_test(mode: u32) -> Result<serde_json::Value, String> {
 
 /// آمار ترافیک مصرفی و سرعت لحظه‌ای از سرویس metrics هسته.
 #[tauri::command]
-fn get_traffic(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+async fn get_traffic(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
     let mut a = state.traffic.lock().map_err(|e| e.to_string())?;
     if !a.loaded {
         load_stats(&mut a);
@@ -828,6 +997,18 @@ fn main() {
             speed_test,
             get_traffic
         ])
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())
+        .expect("خطا هنگام ساخت برنامه")
+        .run(|app, event| {
+            // هنگام بستن برنامه: هسته را ببند و پروکسی سیستم را خاموش کن
+            if let tauri::RunEvent::Exit = event {
+                let st = app.state::<AppState>();
+                if let Some(mut child) = st.child.lock().ok().and_then(|mut g| g.take()) {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
+                let _ = set_proxy(false);
+            }
+        })
         .expect("خطا هنگام اجرای برنامه");
 }
