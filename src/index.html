@@ -466,9 +466,9 @@ select:focus,input.tin:focus{outline:none;border-color:var(--accent-edge)}
             <line x1="0" y1="37"  x2="600" y2="37"  stroke="var(--line-soft)"/>
             <line x1="0" y1="75"  x2="600" y2="75"  stroke="var(--line-soft)"/>
             <line x1="0" y1="113" x2="600" y2="113" stroke="var(--line-soft)"/>
-            <path fill="url(#gd)" d="M0,122 L30,110 L60,116 L90,82 L120,92 L150,53 L180,69 L210,35 L240,59 L270,28 L300,47 L330,18 L360,41 L390,31 L420,63 L450,45 L480,71 L510,57 L540,86 L570,65 L600,77 L600,150 L0,150 Z"/>
-            <path fill="none" stroke="var(--teal)" stroke-width="2.4" d="M0,122 L30,110 L60,116 L90,82 L120,92 L150,53 L180,69 L210,35 L240,59 L270,28 L300,47 L330,18 L360,41 L390,31 L420,63 L450,45 L480,71 L510,57 L540,86 L570,65 L600,77"/>
-            <path fill="none" stroke="var(--accent)" stroke-width="1.9" stroke-opacity=".85" d="M0,141 L30,138 L60,143 L90,132 L120,137 L150,125 L180,134 L210,122 L240,133 L270,118 L300,130 L330,115 L360,128 L390,124 L420,135 L450,127 L480,139 L510,132 L540,142 L570,134 L600,137"/>
+            <path fill="url(#gd)" id="spkFill" d=""/>
+            <path fill="none" stroke="var(--teal)" stroke-width="2.4" id="spkDown" d=""/>
+            <path fill="none" stroke="var(--accent)" stroke-width="1.9" stroke-opacity=".85" id="spkUp" d=""/>
           </svg>
           <div class="legend">
             <span><i style="background:var(--teal)"></i>دانلود <b id="spDown">—</b></span>
@@ -492,18 +492,18 @@ select:focus,input.tin:focus{outline:none;border-color:var(--accent-edge)}
         <div class="card">
           <h2>نشانی اینترنتی شما</h2>
           <div class="ipr">
-            <span class="cc" style="background:color-mix(in srgb,var(--blue) 16%,transparent);color:var(--blue)">NL</span>
+            <span class="cc" id="ipProxyCc" style="background:color-mix(in srgb,var(--blue) 16%,transparent);color:var(--blue)">?</span>
             <div class="tx">
               <div class="k">از دید سایت‌ها</div>
-              <div class="v">185.107.56.214 <em>Amsterdam</em></div>
+              <div class="v" id="ipProxyV">—</div>
             </div>
             <span class="chip">مخفی</span>
           </div>
           <div class="ipr">
-            <span class="cc" style="background:color-mix(in srgb,var(--red) 16%,transparent);color:var(--red)">IR</span>
+            <span class="cc" id="ipRealCc" style="background:color-mix(in srgb,var(--red) 16%,transparent);color:var(--red)">?</span>
             <div class="tx">
               <div class="k">نشانی واقعی شما</div>
-              <div class="v">91.98.•••.••• <em>پنهان</em></div>
+              <div class="v" id="ipRealV">—</div>
             </div>
             <span class="chip">بدون نشتی</span>
           </div>
@@ -511,11 +511,11 @@ select:focus,input.tin:focus{outline:none;border-color:var(--accent-edge)}
 
         <div class="card">
           <h2>تست سرعت <span class="pill">fast.com</span></h2>
-          <div class="sp"><span class="n">62</span><span class="u">Mbps دانلود</span></div>
+          <div class="sp"><span class="n" id="stNum">—</span><span class="u">Mbps دانلود</span></div>
           <div class="track"><i></i></div>
-          <div class="kv"><span>آپلود</span><b>۱۸ Mbps</b></div>
-          <div class="kv"><span>پینگ</span><b>۱۱۲ ms</b></div>
-          <button class="btn g sm sp-btn">تست دوباره</button>
+          <div class="kv"><span>آپلود</span><b id="stUp">—</b></div>
+          <div class="kv"><span>پینگ</span><b id="stPing">—</b></div>
+          <button class="btn g sm sp-btn" id="stBtn" onclick="runSpeedTest()">تست دوباره</button>
         </div>
 
         <div class="card">
@@ -537,7 +537,7 @@ select:focus,input.tin:focus{outline:none;border-color:var(--accent-edge)}
           <h2>سرورها</h2>
           <span class="c" id="dashSubName">—</span>
           <input class="search" id="dashSearch" placeholder="جستجو…">
-          <button class="btn g sm">تست همه</button>
+          <button class="btn g sm" onclick="testAll()">تست همه</button>
           <div class="gear" id="dashGear" title="تنظیم نمایش">
             <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M18.4 5.6l-1.8 1.8M7.4 16.6l-1.8 1.8"/></svg>
           </div>
@@ -564,7 +564,7 @@ select:focus,input.tin:focus{outline:none;border-color:var(--accent-edge)}
           <h2>همهٔ سرورها</h2>
           <span class="c" id="allCount">—</span>
           <select id="allSub" style="min-width:170px;margin-right:auto"></select>
-          <button class="btn g sm">تست همه</button>
+          <button class="btn g sm" onclick="testAll()">تست همه</button>
           <div class="gear" id="allGear" title="تنظیم نمایش">
             <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M18.4 5.6l-1.8 1.8M7.4 16.6l-1.8 1.8"/></svg>
           </div>
@@ -824,6 +824,13 @@ select:focus,input.tin:focus{outline:none;border-color:var(--accent-edge)}
 <script>
 "use strict";
 
+/* ============ حالت واقعی (داخل برنامه) یا نمایشی (پیش‌نمایش) ============ */
+const inTauri = !!(window.__TAURI__ && window.__TAURI__.core);
+let isConnected = false;
+let connStarted = 0;
+const sparkDn = [], sparkUp = [];
+let spMax = 0;
+
 /* ================= کمکی‌ها ================= */
 const FA = "۰۱۲۳۴۵۶۷۸۹";
 const toFa = s => String(s).replace(/\d/g, d => FA[+d]).replace(".", "٫");
@@ -1004,15 +1011,7 @@ function draw(which){
 
 function pickServer(i){
   activeSrv = i;
-  const s = SERVERS[i];
-  document.getElementById("liveName").textContent = s.name;
-  const lamp = document.getElementById("liveLamp");
-  lamp.style.background = `var(--${msCls(s.ms)})`;
-  lamp.style.boxShadow  = `0 0 0 4px color-mix(in srgb, var(--${msCls(s.ms)}) 16%, transparent),`
-                        + `0 0 14px color-mix(in srgb, var(--${msCls(s.ms)}) 55%, transparent)`;
-  document.getElementById("liveMeta").innerHTML =
-    `${s.proto} / reality · تأخیر <b class="ms ${msCls(s.ms)}" style="width:auto">${msTxt(s.ms)}</b>`
-    + `<br>متصل از ۲ ساعت و ۱۴ دقیقه پیش`;
+  updateLive();
   draw("dash"); draw("all");
 }
 
@@ -1208,6 +1207,12 @@ function tick(){
   document.getElementById("spUp").textContent   = `${hu.n} ${hu.u}`;
   document.getElementById("spMax").textContent  = `${hm.n} ${hm.u}`;
 
+  /* نمودار نمایشی (فقط در پیش‌نمایش) — در برنامهٔ واقعی از دادهٔ حقیقی پر می‌شود */
+  sparkDn.push(dSpd); sparkUp.push(uSpd);
+  if(sparkDn.length > 120) sparkDn.shift();
+  if(sparkUp.length > 120) sparkUp.shift();
+  paintSpark();
+
   dnB += dSpd * 1.2; upB += uSpd * 1.2; monthB += (dSpd + uSpd) * 1.2;
   const td = human(dnB), tu = human(upB);
   document.getElementById("usDown").innerHTML = `${td.n}<span>${td.u}</span>`;
@@ -1218,7 +1223,12 @@ function tick(){
   document.getElementById("usBarD").style.width = p.toFixed(1) + "%";
   document.getElementById("usBarU").style.width = (100 - p).toFixed(1) + "%";
 }
-tick(); setInterval(tick, 1200);
+if(inTauri){
+  setInterval(pollStats, 1000);
+  setInterval(updateLive, 1000);
+}else{
+  tick(); setInterval(tick, 1200);
+}
 
 /* ---------- شروع ---------- */
 pickServer(0);
@@ -1334,7 +1344,6 @@ document.querySelectorAll("#p-route .sg").forEach(sg=>{
   });
 
   /* ---------- اتصال به موتور ---------- */
-  let isConnected = false;
 
 async function connectNow(){
   const s = SERVERS[activeSrv];
@@ -1349,6 +1358,8 @@ async function connectNow(){
   try{
     const result = await window.__TAURI__.core.invoke(curMode === 1 ? "run_tun" : "run_xray", { link: s.raw });
     isConnected = true; updateBtn();
+    connStarted = Date.now();
+    refreshIps();
     say("cfgHint", result, "good");
   }catch(e){
     say("cfgHint", String(e), "bad");
@@ -1359,10 +1370,140 @@ async function disconnectNow(){
   try{
     const result = await window.__TAURI__.core.invoke("stop_xray");
     isConnected = false; updateBtn();
+    connStarted = 0;
+    document.getElementById("spDown").textContent = "—";
+    document.getElementById("spUp").textContent = "—";
+    document.getElementById("ipProxyV").textContent = "—";
+    document.getElementById("ipRealV").textContent = "—";
     say("cfgHint", result, "good");
   }catch(e){
     say("cfgHint", String(e), "bad");
   }
+}
+
+/* ================= داده‌های واقعی ================= */
+
+function fmtDur(sec){
+  sec = Math.floor(sec);
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60);
+  if(h) return `متصل از ${toFa(h)} ساعت و ${toFa(m)} دقیقه پیش`;
+  if(m) return `متصل از ${toFa(m)} دقیقه پیش`;
+  return `متصل از ${toFa(sec)} ثانیه پیش`;
+}
+
+function updateLive(){
+  const s = SERVERS[activeSrv];
+  if(!s) return;
+  document.getElementById("liveName").textContent = s.name;
+  const lamp = document.getElementById("liveLamp");
+  const c = isConnected ? "teal" : msCls(s.ms);
+  lamp.style.background = `var(--${c})`;
+  lamp.style.boxShadow  = `0 0 0 4px color-mix(in srgb, var(--${c}) 16%, transparent),`
+                        + `0 0 14px color-mix(in srgb, var(--${c}) 55%, transparent)`;
+  const dur = isConnected
+    ? (connStarted ? fmtDur((Date.now() - connStarted) / 1000) : "")
+    : (!inTauri ? "متصل از ۲ ساعت و ۱۴ دقیقه پیش" : "");
+  document.getElementById("liveMeta").innerHTML =
+    `${s.proto} / reality · تأخیر <b class="ms ${msCls(s.ms)}" style="width:auto">${msTxt(s.ms)}</b>`
+    + (dur ? `<br>${dur}` : "");
+}
+
+function paintSpark(){
+  const f = document.getElementById("spkFill"), d = document.getElementById("spkDown"), u = document.getElementById("spkUp");
+  if(!d) return;
+  const W = 600, H = 150, n = 60;
+  const dn = sparkDn.slice(-n), up = sparkUp.slice(-n);
+  const m = Math.max(1, ...dn, ...up);
+  const path = arr => {
+    if(!arr.length) return "M0,142 L600,142";
+    return arr.map((v,i) => `${i ? "L" : "M"}${(i / (n - 1) * W).toFixed(1)},${(H - 10 - (v / m) * (H - 20)).toFixed(1)}`).join(" ");
+  };
+  const dl = path(dn), ul = path(up);
+  d.setAttribute("d", dl);
+  u.setAttribute("d", ul);
+  f.setAttribute("d", dl + " L600,150 L0,150 Z");
+}
+
+async function pollStats(){
+  if(!isConnected || !inTauri) return;
+  try{
+    const r = await window.__TAURI__.core.invoke("get_traffic");
+    const dn = r.downSpeed || 0, up = r.upSpeed || 0;
+    sparkDn.push(dn); sparkUp.push(up);
+    if(sparkDn.length > 120) sparkDn.shift();
+    if(sparkUp.length > 120) sparkUp.shift();
+    spMax = Math.max(spMax, dn);
+    const hd = human(dn, true), hu = human(up, true), hm = human(spMax, true);
+    document.getElementById("spDown").textContent = `${hd.n} ${hd.u}`;
+    document.getElementById("spUp").textContent   = `${hu.n} ${hu.u}`;
+    document.getElementById("spMax").textContent  = `${hm.n} ${hm.u}`;
+    paintSpark();
+    const td = human(r.todayDown || 0), tu = human(r.todayUp || 0);
+    document.getElementById("usDown").innerHTML  = `${td.n}<span>${td.u}</span>`;
+    document.getElementById("usUp").innerHTML    = `${tu.n}<span>${tu.u}</span>`;
+    document.getElementById("usAll").textContent = humanTxt((r.totalDown||0) + (r.totalUp||0));
+    document.getElementById("usMonth").textContent = humanTxt((r.monthDown||0) + (r.monthUp||0));
+    const tot = (r.todayDown||0) + (r.todayUp||0);
+    const p = tot ? (r.todayDown||0) / tot * 100 : 50;
+    document.getElementById("usBarD").style.width = p.toFixed(1) + "%";
+    document.getElementById("usBarU").style.width = (100 - p).toFixed(1) + "%";
+  }catch(e){}
+}
+
+async function refreshIps(){
+  if(!inTauri || !isConnected) return;
+  try{
+    const r = await window.__TAURI__.core.invoke("get_ips", { mode: curMode });
+    const p = r.proxy || {}, d = r.direct || {};
+    if(p.ip){
+      document.getElementById("ipProxyCc").textContent = p.cc || "?";
+      document.getElementById("ipProxyV").innerHTML = `${p.ip}${p.city ? ` <em>${p.city}</em>` : ""}`;
+    }
+    if(d.ip){
+      document.getElementById("ipRealCc").textContent = d.cc || "?";
+      const parts = d.ip.split(".");
+      const masked = parts.length === 4
+        ? parts[0] + "." + parts[1] + ".•••.•••"
+        : "•••.•••.•••.•••";
+      document.getElementById("ipRealV").textContent = masked;
+    }
+  }catch(e){}
+}
+
+async function runSpeedTest(){
+  const btn = document.getElementById("stBtn");
+  if(!inTauri){ say("cfgHint", "تست سرعت فقط در برنامهٔ نصب‌شده کار می‌کند.", "bad"); return; }
+  if(!isConnected){ say("cfgHint", "اول یک سرور را وصل کن، بعد تست سرعت بگیر.", "bad"); return; }
+  btn.disabled = true;
+  btn.textContent = "در حال تست…";
+  try{
+    const r = await window.__TAURI__.core.invoke("speed_test", { mode: curMode });
+    document.getElementById("stNum").textContent  = toFa(r.down || 0);
+    document.getElementById("stUp").textContent   = toFa(r.up || 0) + " Mbps";
+    document.getElementById("stPing").textContent = toFa(r.ping || 0) + " ms";
+    say("cfgHint", "تست سرعت انجام شد.", "good");
+  }catch(e){
+    say("cfgHint", String(e), "bad");
+  }
+  btn.disabled = false;
+  btn.textContent = "تست دوباره";
+}
+
+async function testAll(){
+  const btns = document.querySelectorAll("button[onclick='testAll()']");
+  btns.forEach(b => { b.disabled = true; b.textContent = "در حال تست…"; });
+  for(const s of SERVERS){
+    if(!s.raw) continue;
+    try{
+      const r = await window.__TAURI__.core.invoke("test_one", { link: s.raw });
+      s.ms = r.ok ? r.ms : null;
+    }catch(e){
+      s.ms = null;
+    }
+    draw("dash"); draw("all");
+  }
+  btns.forEach(b => { b.disabled = false; b.textContent = "تست همه"; });
+  updateLive();
 }
 
 async function toggleConnect(){
