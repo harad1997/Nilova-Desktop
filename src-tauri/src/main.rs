@@ -9,7 +9,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use serde_json::json;
-use tauri::State;
+use tauri::{Manager, State};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -375,7 +375,7 @@ fn set_proxy(on: bool) -> Result<(), String> {
 }
 
 fn is_admin() -> bool {
-    match silent(Command::new("whoami")).arg("/groups").output() {
+    match silent(&mut Command::new("whoami")).arg("/groups").output() {
         Ok(o) => String::from_utf8_lossy(&o.stdout).contains("S-1-16-12288"),
         Err(_) => false,
     }
@@ -722,7 +722,7 @@ fn save_stats(a: &TrafficAcc) {
 /// تاریخ امروز به شکل میلادی — از PowerShell (بدون وابستگی جدید، بدون پنجره).
 fn date_str(format: &str) -> String {
     let ps_cmd = format!("Get-Date -Format '{}'", format);
-    match silent(Command::new("powershell"))
+    match silent(&mut Command::new("powershell"))
         .args(["-NoProfile", "-Command", ps_cmd.as_str()])
         .output()
     {
@@ -1009,6 +1009,5 @@ fn main() {
                 }
                 let _ = set_proxy(false);
             }
-        })
-        .expect("خطا هنگام اجرای برنامه");
+        });
 }
