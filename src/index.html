@@ -452,7 +452,7 @@ select:focus,input.tin:focus{outline:none;border-color:var(--accent-edge)}
               <div class="nm" id="liveName">—</div>
               <div class="mt" id="liveMeta">—</div>
             </div>
-            <button class="btn big">قطع اتصال</button>
+            <button class="btn big" id="toggleBtn" onclick="toggleConnect()">اتصال</button>
           </div>
         </div>
 
@@ -552,10 +552,11 @@ select:focus,input.tin:focus{outline:none;border-color:var(--accent-edge)}
       <div class="card addbox">
         <h2>افزودن کانفیگ تکی</h2>
         <div class="addrow">
-          <input id="cfgUrl" placeholder="vless:// یا vmess:// یا trojan:// یا ss:// — بدون نیاز به اشتراک">
-          <button class="btn g" onclick="pasteCfg()">جایگذاری از کلیپ‌بورد</button>
-          <button class="btn" onclick="addCfg()">افزودن</button>
-        </div>
+  <input id="cfgUrl" placeholder="vless:// یا vmess:// یا trojan:// یا ss:// — بدون نیاز به اشتراک">
+  <button class="btn g" onclick="pasteCfg()">جایگذاری از کلیپبورد</button>
+  <button class="btn" onclick="addCfg()">افزودن</button>
+  <button class="btn" onclick="connectNow()">اتصال</button>
+</div>
         <div class="hint" id="cfgHint">هر بار یک کانفیگ. کانفیگ‌های افزوده‌شده در گروه «کانفیگ‌های دستی» می‌نشینند.</div>
       </div>
 
@@ -1318,6 +1319,41 @@ document.querySelectorAll("#p-route .sg").forEach(sg=>{
     sg.classList.add("on");
   });
 });
+  /* ---------- اتصال به موتور ---------- */
+let isConnected = false;
+
+async function connectNow(){
+  const link = document.getElementById("cfgUrl").value.trim();
+  if(!link){ say("cfgHint","اول یک کانفیگ وارد کنید.","bad"); return; }
+  if(!link.startsWith("vless://")){ say("cfgHint","فعلاً فقط کانفیگ VLESS پشتیبانی میشود.","bad"); return; }
+  try{
+    const result = await window.__TAURI__.core.invoke("run_xray", { link: link });
+    isConnected = true; updateBtn();
+    say("cfgHint", result, "good");
+  }catch(e){
+    say("cfgHint", String(e), "bad");
+  }
+}
+
+async function disconnectNow(){
+  try{
+    const result = await window.__TAURI__.core.invoke("stop_xray");
+    isConnected = false; updateBtn();
+    say("cfgHint", result, "good");
+  }catch(e){
+    say("cfgHint", String(e), "bad");
+  }
+}
+
+async function toggleConnect(){
+  if(isConnected) await disconnectNow();
+  else await connectNow();
+}
+
+function updateBtn(){
+  const btn = document.getElementById("toggleBtn");
+  if(btn) btn.textContent = isConnected ? "قطع اتصال" : "اتصال";
+}
 </script>
 </body>
 </html>
