@@ -29,7 +29,7 @@ fn parse_vless(link: &str) -> Option<(String, String, String, String, String, St
     let mut path = String::new();
     let mut host = String::new();
     let mut ty = String::from("tcp");
-    let mut security = String::new();
+    let mut _security = String::new();
     for pair in query.split('&') {
         let mut it = pair.splitn(2, '=');
         let k = it.next().unwrap_or("");
@@ -38,7 +38,7 @@ fn parse_vless(link: &str) -> Option<(String, String, String, String, String, St
             "path" => path = v.replace("%2F", "/").replace("%40", "@"),
             "host" => host = v.replace("%40", "@"),
             "type" => ty = v.to_string(),
-            "security" => security = v.to_string(),
+            "security" => _security = v.to_string(),
             _ => {}
         }
     }
@@ -98,6 +98,7 @@ fn build_config(link: &str) -> Option<String> {
     Some(config.to_string())
 }
 
+#[tauri::command]
 fn run_xray(link: String, state: State<'_, AppState>) -> Result<String, String> {
     let config_json = build_config(&link).ok_or("لینک VLESS معتبر نیست")?;
 
@@ -132,6 +133,7 @@ fn run_xray(link: String, state: State<'_, AppState>) -> Result<String, String> 
     Ok("اتصال برقرار شد".into())
 }
 
+#[tauri::command]
 fn stop_xray(state: State<'_, AppState>) -> Result<String, String> {
     let mut state = state.child.lock().map_err(|e| e.to_string())?;
     if let Some(mut child) = state.take() {
