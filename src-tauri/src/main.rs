@@ -366,7 +366,7 @@ fn rtt_ms(proxy: Option<&str>, timeout: u32) -> Result<f64, String> {
     if !ok {
         return Err("انقضای زمان".into());
     }
-    let secs: f64 = out.trim().parse().map_err(|_| "خروجی نامعتبر".into())?;
+    let secs: f64 = out.trim().parse().map_err(|_| "خروجی نامعتبر".to_string())?;
     Ok(secs * 1000.0)
 }
 
@@ -602,7 +602,7 @@ fn transfer_speed(proxy: Option<&str>, url: &str, write_out: &str, timeout: u32)
     if !ok {
         return Err("انقضای زمان در تست".into());
     }
-    let bps: f64 = out.trim().parse().map_err(|_| "خروجی نامعتبر".into())?;
+    let bps: f64 = out.trim().parse().map_err(|_| "خروجی نامعتبر".to_string())?;
     Ok(bps * 8.0 / 1_000_000.0)
 }
 
@@ -636,7 +636,7 @@ fn upload_speed(proxy: Option<&str>, bytes: usize) -> Result<f64, String> {
     if !ok {
         return Err("انقضای زمان در تست آپلود".into());
     }
-    let bps: f64 = out.trim().parse().map_err(|_| "خروجی نامعتبر".into())?;
+    let bps: f64 = out.trim().parse().map_err(|_| "خروجی نامعتبر".to_string())?;
     Ok(bps * 8.0 / 1_000_000.0)
 }
 
