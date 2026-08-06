@@ -303,6 +303,7 @@ svg.spark{display:block;width:100%;height:92px}
 .tile .b{display:flex;align-items:center;gap:8px}
 .tile .b .ms{width:auto;margin-right:auto}
 .tile .host{font-size:var(--fb);color:var(--muted);margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;direction:ltr;text-align:right}
+.tile .err,.row .err{font-size:10.5px;color:#e0594f;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sz-min .hidemin{display:none}
 .empty{padding:34px 16px;text-align:center;color:var(--muted);font-size:12.5px;line-height:1.9}
 
@@ -882,7 +883,9 @@ const subOf = id => SUBS.find(s => s.id === id);
 const countOf = id => SERVERS.filter(s => s.sub === id).length;
 /* رنگ تأخیر: زیر ۱۰۰ سبز پررنگ · ۱۰۰–۲۵۰ سبز کم‌رنگ · ۲۵۰–۳۵۰ زرد · بالای ۳۵۰ قهوه‌ای · قطع قرمز کم‌رنگ */
 const msCls = m => m === null ? "p0" : m < 100 ? "p1" : m <= 250 ? "p2" : m <= 350 ? "p3" : "p4";
-const msTxt = m => m === null ? "‎−۱" : toFa(m) + " ms";
+const msTxt = m => m === null ? "ناموفق" : toFa(m) + " ms";
+const esc = t => String(t ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+const errHtml = s => s.err ? `<div class="err">${esc(s.err)}</div>` : "";
 
 let activeSub = "s1";     // اشتراک انتخاب‌شده
 let activeSrv = 0;        // سرور متصل
@@ -984,12 +987,13 @@ function draw(which){
           <span class="ms ${msCls(s.ms)}">${msTxt(s.ms)}</span>
         </div>
         <div class="host hidemin">${s.host}</div>
+        ${errHtml(s)}
       </div>`).join("");
   }else{
     box.innerHTML = list.map(s => `
       <div class="row${s.i===activeSrv?" on":""}" data-i="${s.i}">
         ${flagHtml(s.cc)}
-        <div class="nm"><div class="a">${s.name}</div><div class="b hidemin">${s.host}</div></div>
+        <div class="nm"><div class="a">${s.name}</div><div class="b hidemin">${s.host}</div>${errHtml(s)}</div>
         <span class="pr ${s.proto} hidemin">${s.proto.toUpperCase()}</span>
         ${dotHtml(s.ms)}
         <span class="ms ${msCls(s.ms)}">${msTxt(s.ms)}</span>
@@ -1497,8 +1501,10 @@ async function testAll(){
     try{
       const r = await window.__TAURI__.core.invoke("test_one", { link: s.raw });
       s.ms = r.ok ? r.ms : null;
+      s.err = r.ok ? null : (r.err || null);
     }catch(e){
       s.ms = null;
+      s.err = String(e);
     }
     draw("dash"); draw("all");
   }
