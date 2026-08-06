@@ -1,5 +1,4 @@
 name: Build Nilova for Windows
-
 on:
   workflow_dispatch:
 
@@ -9,40 +8,46 @@ permissions:
 jobs:
   build-windows:
     runs-on: windows-latest
-
     steps:
       - name: دریافت کد پروژه
         uses: actions/checkout@v4
 
-      - name: آمادهسازی Node.js
+      - name: آماده‌سازی Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - name: آمادهسازی Rust
+      - name: آماده‌سازی Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: نصب بستهها
+      - name: نصب بسته‌ها
         run: npm install
 
-      - name: دانلود هسته Xray
+      - name: دانلود هسته Xray و درایور Wintun
         shell: powershell
         run: |
           New-Item -ItemType Directory -Path "src-tauri\target\release" -Force
-          Invoke-WebRequest -Uri "https://github.com/XTLS/Xray-core/releases/download/v26.7.28/Xray-windows-64.zip" -OutFile "xray.zip"
+          Invoke-WebRequest -Uri "https://github.com/XTLS/Xray-core/releases/download/v26.3.27/Xray-windows-64.zip" -OutFile "xray.zip"
           Expand-Archive -Path "xray.zip" -DestinationPath "xray-extract" -Force
           Copy-Item "xray-extract\xray.exe" "src-tauri\target\release\xray.exe"
           Remove-Item "xray.zip"
+          Invoke-WebRequest -Uri "https://www.wintun.net/builds/wintun-0.14.1.zip" -OutFile "wintun.zip"
+          Expand-Archive -Path "wintun.zip" -DestinationPath "wintun-extract" -Force
+          $wintun = Get-ChildItem -Path "wintun-extract" -Recurse -Filter "wintun.dll" | Where-Object { $_.FullName -match "amd64" } | Select-Object -First 1
+          if (-not $wintun) { $wintun = Get-ChildItem -Path "wintun-extract" -Recurse -Filter "wintun.dll" | Select-Object -First 1 }
+          Copy-Item $wintun.FullName "src-tauri\target\release\wintun.dll"
+          Remove-Item "wintun.zip"
 
       - name: ساخت برنامه نیلووا
         run: npm run tauri -- build
 
-      - name: کنار هم قرار دادن فایلها
+      - name: کنار هم قرار دادن فایل‌ها
         shell: powershell
         run: |
           New-Item -ItemType Directory -Path "Nilova-desktop" -Force
           Copy-Item "src-tauri\target\release\Nilova-desktop.exe" "Nilova-desktop\"
           Copy-Item "src-tauri\target\release\xray.exe" "Nilova-desktop\"
+          Copy-Item "src-tauri\target\release\wintun.dll" "Nilova-desktop\"
 
       - name: ذخیره فایل خروجی
         uses: actions/upload-artifact@v4
