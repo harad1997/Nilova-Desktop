@@ -1,1705 +1,1278 @@
-<!DOCTYPE html>
-<html lang="fa" dir="rtl" data-theme="dark">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Nilova — طرح رادار</title>
-<style>
-/* ==================== تم‌ها ==================== */
-[data-theme="dark"]{
-  color-scheme:dark;
-  --bg:#0d1317; --rail:#0a1014; --panel:#141d23; --panel-2:#1a252c; --line:#22323b;
-  --line-soft:#18242a; --ink:#e6eef2; --muted:#7e939e;
-  --accent:#f2a93b; --accent-ink:#1a1005; --accent-soft:#1a1408; --accent-edge:#3d2f11;
-  --teal:#3fb9a6; --red:#e0604e; --blue:#8ab4f8; --violet:#c9a0ff;
-  --shadow:0 10px 26px rgba(0,0,0,.45); --track:#22323b;
-}
-[data-theme="light"]{
-  color-scheme:light;
-  --bg:#eef1f5; --rail:#ffffff; --panel:#ffffff; --panel-2:#f2f5f8; --line:#dfe5eb;
-  --line-soft:#eaeef2; --ink:#16202a; --muted:#68798a;
-  --accent:#e08a15; --accent-ink:#ffffff; --accent-soft:#fdf3e2; --accent-edge:#f0dcb4;
-  --teal:#12907f; --red:#c8442f; --blue:#2f6fd0; --violet:#7a4bbd;
-  --shadow:0 10px 26px rgba(22,32,42,.12); --track:#e3e8ee;
-}
-[data-theme="gray"]{
-  color-scheme:dark;
-  --bg:#1d2125; --rail:#181c1f; --panel:#282d32; --panel-2:#32383e; --line:#3c434a;
-  --line-soft:#2f353b; --ink:#e9ecef; --muted:#9aa4ae;
-  --accent:#dfe4e9; --accent-ink:#1d2125; --accent-soft:#333940; --accent-edge:#4a525a;
-  --teal:#7fc4b4; --red:#e08878; --blue:#9db9dd; --violet:#bda8dd;
-  --shadow:0 10px 26px rgba(0,0,0,.45); --track:#3c434a;
-}
-[data-theme="turq"]{
-  color-scheme:dark;
-  --bg:#061e1c; --rail:#041614; --panel:#0c2b28; --panel-2:#123833; --line:#1b4a44;
-  --line-soft:#153b36; --ink:#dcf4f0; --muted:#7cada6;
-  --accent:#2fd6c0; --accent-ink:#042420; --accent-soft:#0f3b36; --accent-edge:#1f6659;
-  --teal:#6ee7d5; --red:#f2836e; --blue:#66d0e8; --violet:#a6c8ff;
-  --shadow:0 10px 26px rgba(0,0,0,.4); --track:#1b4a44;
-}
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-*{box-sizing:border-box;margin:0;padding:0}
-body{
-  background:var(--bg); color:var(--ink);
-  font-family:"Segoe UI",Tahoma,sans-serif; font-size:14px;
-  height:100vh; overflow:hidden;
-  transition:background .25s, color .25s;
-}
-.app{display:flex;height:100vh}
-::-webkit-scrollbar{width:9px;height:9px}
-::-webkit-scrollbar-track{background:transparent}
-::-webkit-scrollbar-thumb{background:var(--line);border-radius:5px}
-::-webkit-scrollbar-thumb:hover{background:var(--muted)}
+use std::fs;
+use std::io::Write;
+use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
-/* ==================== ناوبری ==================== */
-.rail{
-  width:80px;background:var(--rail);border-left:1px solid var(--line);
-  display:flex;flex-direction:column;align-items:center;padding:14px 0;gap:4px;flex-shrink:0;
-}
-.brand{
-  width:54px;height:54px;border-radius:15px;margin-bottom:18px;
-  background:linear-gradient(150deg,#182246 0%,#0f2b3c 100%);
-  border:1px solid #2b3a63;
-  display:grid;place-items:center;overflow:hidden;cursor:pointer;
-  box-shadow:0 2px 8px rgba(6,18,40,.35);
-  transition:transform .22s cubic-bezier(.2,.8,.3,1), box-shadow .22s, border-color .22s;
-}
-.brand:hover{
-  transform:translateY(-3px) scale(1.06);
-  border-color:#06B6D4;
-  box-shadow:0 10px 22px rgba(6,182,212,.34), 0 0 0 3px rgba(79,70,229,.20);
-}
-.brand:active{transform:translateY(-1px) scale(1.02)}
-.brand svg{width:40px;height:40px;display:block;transition:transform .22s cubic-bezier(.2,.8,.3,1)}
-.brand:hover svg{transform:scale(1.08)}
-.wordmark{
-  background:linear-gradient(135deg,#4F46E5 0%,#06B6D4 62%,#A5F3FC 100%);
-  -webkit-background-clip:text;background-clip:text;color:transparent;
-}
-.nav{
-  width:60px;padding:9px 0;border-radius:9px;cursor:pointer;
-  display:flex;flex-direction:column;align-items:center;gap:5px;
-  color:var(--muted);font-size:10.5px;border:1px solid transparent;
-  transition:all .18s;
-}
-.nav svg{width:19px;height:19px;stroke:currentColor;fill:none;stroke-width:1.6}
-.nav:hover{color:var(--ink);background:var(--panel-2);transform:translateY(-1px)}
-.nav.on{color:var(--accent);background:var(--accent-soft);border-color:var(--accent-edge)}
+use serde_json::json;
+use tauri::{Emitter, Manager, State};
 
-/* ==================== قاب ==================== */
-.main{flex:1;display:flex;flex-direction:column;min-width:0}
-.titlebar{
-  height:40px;border-bottom:1px solid var(--line);display:flex;align-items:center;
-  padding:0 16px;gap:14px;background:var(--rail);flex-shrink:0;
-}
-.titlebar .name{font-size:13px;font-weight:600;letter-spacing:.2px}
-.titlebar .crumb{font-size:11.5px;color:var(--muted)}
-.themes{margin-right:auto;display:flex;align-items:center;gap:6px}
-.themes .lb{font-size:10.5px;color:var(--muted);margin-left:4px}
-.sw{
-  width:20px;height:20px;border-radius:6px;cursor:pointer;border:1.5px solid var(--line);
-  transition:transform .16s, box-shadow .16s;
-}
-.sw:hover{transform:scale(1.14)}
-.sw.on{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-soft)}
-.win{color:var(--muted);font-size:13px;letter-spacing:6px;margin-right:14px}
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 
-.page{flex:1;overflow:auto;padding:14px}
-.page[hidden]{display:none !important}
-#p-dash,#p-servers{display:flex;flex-direction:column;overflow:hidden}
-#p-dash .panel,#p-servers .panel{flex:1;min-height:0;display:flex;flex-direction:column}
-
-/* ==================== کارت ==================== */
-.card{
-  background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:11px 14px;
-  transition:transform .2s cubic-bezier(.2,.7,.3,1), box-shadow .2s, border-color .2s;
-}
-.card:hover{transform:translateY(-3px);box-shadow:var(--shadow);border-color:var(--accent-edge)}
-.card h2{
-  font-size:10px;color:var(--muted);font-weight:600;letter-spacing:1.2px;
-  margin-bottom:9px;display:flex;align-items:center;gap:8px;
-}
-.card h2 .pill{
-  margin-right:auto;font-size:9px;letter-spacing:.3px;color:var(--muted);font-weight:500;
-  border:1px solid var(--line);border-radius:20px;padding:2px 8px;
-}
-.grid{display:grid;gap:11px;margin-bottom:11px;flex-shrink:0}
-.g-hero{grid-template-columns:1fr 1.4fr}
-.g-quad{grid-template-columns:.78fr 1.2fr 1.02fr 1.05fr}
-.g-half{grid-template-columns:1fr 1fr}
-
-/* ---- کارت سرور فعال ---- */
-.live{display:flex;align-items:center;gap:13px}
-.lamp{
-  width:10px;height:10px;border-radius:50%;background:var(--teal);flex-shrink:0;
-  box-shadow:0 0 0 4px color-mix(in srgb, var(--teal) 15%, transparent),
-             0 0 14px color-mix(in srgb, var(--teal) 55%, transparent);
-}
-.live .who{flex:1;min-width:0}
-.live .nm{font-size:15px;font-weight:700;letter-spacing:-.3px;margin-bottom:3px}
-.live .mt{font-size:10.5px;color:var(--muted);line-height:1.55}
-.live .mt b{color:var(--teal);font-weight:600}
-.btn{
-  background:var(--accent);color:var(--accent-ink);border:0;border-radius:9px;
-  padding:10px 22px;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;
-  transition:transform .15s, filter .15s;white-space:nowrap;
-}
-.btn:hover{filter:brightness(1.09);transform:translateY(-1px)}
-.btn.g{background:var(--panel-2);color:var(--ink);border:1px solid var(--line)}
-.btn.g:hover{border-color:var(--accent-edge);filter:none}
-.btn.sm{padding:7px 14px;font-size:12px;border-radius:8px}
-.btn.dz{background:transparent;color:var(--red);border:1px solid var(--line)}
-.btn.dz:hover{border-color:var(--red);filter:none}
-.btn.big{padding:19px 32px;font-size:16.5px;border-radius:12px;box-shadow:0 4px 16px color-mix(in srgb,var(--accent) 32%,transparent)}
-
-/* ---- ترافیک مصرفی ---- */
-.use{display:flex;gap:16px;margin-bottom:9px}
-.use div{flex:1}
-.use .k{font-size:9.5px;color:var(--muted);margin-bottom:3px;letter-spacing:.4px}
-.use .v{font-size:19px;font-weight:700;letter-spacing:-.8px;font-variant-numeric:tabular-nums}
-.use .v span{font-size:10px;color:var(--muted);font-weight:400;letter-spacing:0;margin-right:3px}
-.use .dn .v{color:var(--teal)} .use .up .v{color:var(--accent)}
-.split{height:6px;border-radius:4px;overflow:hidden;display:flex;background:var(--track)}
-.split i{display:block;height:100%}
-.usefoot{display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-top:6px}
-
-/* ---- سرعت شبکه ---- */
-svg.spark{display:block;width:100%;height:92px}
-.legend{display:flex;gap:14px;font-size:10.5px;color:var(--muted);margin-top:4px}
-.legend i{display:inline-block;width:10px;height:3px;border-radius:2px;vertical-align:middle;margin-left:6px}
-.legend b{color:var(--ink);font-weight:600;font-variant-numeric:tabular-nums}
-
-/* ---- تست سرعت ---- */
-.sp{display:flex;align-items:baseline;gap:6px;margin-bottom:8px}
-.sp .n{font-size:32px;font-weight:300;letter-spacing:-1.8px;line-height:1;color:var(--teal);font-variant-numeric:tabular-nums}
-.sp .u{font-size:10.5px;color:var(--muted)}
-.track{height:5px;border-radius:3px;background:var(--track);overflow:hidden;margin-bottom:9px}
-.track i{display:block;height:100%;width:68%;border-radius:3px;background:linear-gradient(90deg,var(--teal),var(--accent))}
-.kv{display:flex;justify-content:space-between;font-size:11px;padding:4.5px 0;border-top:1px solid var(--line-soft)}
-.kv span{color:var(--muted)}
-.kv b{font-weight:700;font-variant-numeric:tabular-nums}
-.sp-btn{margin-top:9px;width:100%}
-
-/* ---- حالت اتصال ---- */
-.seg{display:flex;gap:4px;background:var(--panel-2);border-radius:10px;padding:3px}
-.sg{
-  flex:1;text-align:center;padding:7px 5px;border-radius:8px;cursor:pointer;
-  font-size:12px;color:var(--muted);font-weight:600;transition:all .16s;
-}
-.sg:hover{color:var(--ink)}
-.sg.on{background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-edge)}
-.mdesc{font-size:10.5px;color:var(--muted);line-height:1.65;margin-top:8px}
-
-/* ---- آی‌پی ---- */
-.ipr{display:flex;align-items:center;gap:10px;padding:6px 0}
-.ipr + .ipr{border-top:1px solid var(--line-soft)}
-.cc{width:26px;height:26px;border-radius:7px;flex-shrink:0;display:grid;place-items:center;font-size:9px;font-weight:800}
-.ipr .tx{flex:1;min-width:0}
-.ipr .k{font-size:9.5px;color:var(--muted);margin-bottom:1px}
-.ipr .v{font-size:12.5px;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.ipr .v em{font-style:normal;font-size:10px;color:var(--muted);font-weight:400;margin-right:6px}
-.chip{font-size:9px;padding:3px 8px;border-radius:20px;font-weight:700;white-space:nowrap;color:var(--teal);background:color-mix(in srgb, var(--teal) 13%, transparent);border:1px solid color-mix(in srgb, var(--teal) 32%, transparent)}
-
-/* ==================== فهرست سرور ==================== */
-.panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden;transition:box-shadow .2s}
-.panel:hover{box-shadow:var(--shadow)}
-.ph{display:flex;align-items:center;gap:12px;padding:13px 16px;border-bottom:1px solid var(--line);flex-shrink:0}
-.ph h2{font-size:13.5px;font-weight:700}
-.ph .c{font-size:11px;color:var(--muted)}
-.search{
-  margin-right:auto;background:var(--panel-2);border:1px solid var(--line);border-radius:8px;
-  padding:7px 12px;color:var(--ink);font-family:inherit;font-size:12.5px;width:200px;
-}
-.search::placeholder{color:var(--muted)}
-.search:focus{outline:none;border-color:var(--accent-edge)}
-.rows{overflow-y:auto;padding:7px}
-.rows.h-dash,.rows.h-full{flex:1;min-height:0}
-.row{
-  display:flex;align-items:center;gap:13px;padding:10px 12px;border-radius:11px;cursor:pointer;
-  border:1px solid transparent;transition:transform .16s, box-shadow .16s, background .16s, border-color .16s;
-}
-.row:hover{background:var(--panel-2);transform:translateY(-2px);box-shadow:var(--shadow);border-color:var(--line)}
-.row.on{background:var(--accent-soft);border-color:var(--accent-edge)}
-.fl{width:29px;height:29px;border-radius:8px;flex-shrink:0;display:grid;place-items:center;font-size:9.5px;font-weight:800}
-.row .nm{flex:1;min-width:0}
-.row .nm .a{font-size:13.5px;font-weight:600;letter-spacing:-.2px}
-.row .nm .b{font-size:10.5px;color:var(--muted);margin-top:2px}
-.pr{font-size:9.5px;padding:3px 9px;border-radius:20px;font-weight:700;letter-spacing:.3px}
-.pr.vless{color:var(--blue);background:color-mix(in srgb, var(--blue) 14%, transparent)}
-.pr.vmess{color:var(--violet);background:color-mix(in srgb, var(--violet) 14%, transparent)}
-.pr.trojan{color:var(--teal);background:color-mix(in srgb, var(--teal) 14%, transparent)}
-/* ---- رنگ‌بندی تأخیر ---- */
-:root{
-  --p1:#16a34a;   /* زیر ۱۰۰ — سبز پررنگ */
-  --p2:#86d18d;   /* ۱۰۰ تا ۲۵۰ — سبز کم‌رنگ */
-  --p3:#e3b341;   /* ۲۵۰ تا ۳۵۰ — زرد */
-  --p4:#a06a43;   /* بالای ۳۵۰ — قهوه‌ای */
-  --p0:#ef9a90;   /* بی‌پاسخ — قرمز کم‌رنگ */
-}
-[data-theme="dark"],[data-theme="gray"],[data-theme="turq"]{--p1:#2fbf6d}
-.dot{
-  width:10px;height:10px;border-radius:50%;flex-shrink:0;background:var(--track);
-  box-shadow:0 0 0 3px color-mix(in srgb, currentColor 14%, transparent);
-}
-.dot.p1{background:var(--p1);color:var(--p1)}
-.dot.p2{background:var(--p2);color:var(--p2)}
-.dot.p3{background:var(--p3);color:var(--p3)}
-.dot.p4{background:var(--p4);color:var(--p4)}
-.dot.p0{background:var(--p0);color:var(--p0)}
-.ms{font-size:12.5px;font-weight:700;font-variant-numeric:tabular-nums;width:58px;text-align:left}
-.ms.p1{color:var(--p1)} .ms.p2{color:var(--p2)} .ms.p3{color:var(--p3)}
-.ms.p4{color:var(--p4)} .ms.p0{color:var(--p0)}
-
-/* ---- تنظیم نمایش سرورها ---- */
-.ph{position:relative}
-.gear{
-  width:32px;height:32px;border-radius:9px;border:1px solid var(--line);background:var(--panel-2);
-  display:grid;place-items:center;cursor:pointer;color:var(--muted);flex-shrink:0;transition:all .16s;
-}
-.gear svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.7}
-.gear:hover{color:var(--ink);border-color:var(--accent-edge)}
-.gear.on{color:var(--accent);background:var(--accent-soft);border-color:var(--accent-edge)}
-.vset{
-  position:absolute;top:52px;left:14px;width:300px;z-index:30;
-  background:var(--panel);border:1px solid var(--line);border-radius:14px;
-  box-shadow:var(--shadow);padding:14px 15px;
-}
-.vset[hidden]{display:none}
-.vset .gh{display:flex;align-items:center;margin-bottom:13px}
-.vset .gh b{font-size:14px;font-weight:700}
-.vset .gh .x{margin-right:auto;cursor:pointer;color:var(--muted);font-size:16px;line-height:1}
-.vset .gh .x:hover{color:var(--ink)}
-.vgroup{margin-bottom:13px}
-.vgroup:last-child{margin-bottom:0}
-.vgroup .lb{font-size:10px;color:var(--muted);letter-spacing:1px;font-weight:600;margin-bottom:7px}
-.opts{display:flex;gap:6px;flex-wrap:wrap}
-.opt{
-  padding:7px 13px;border-radius:9px;border:1px solid var(--line);background:var(--panel-2);
-  color:var(--muted);font-size:12px;font-family:inherit;cursor:pointer;transition:all .16s;
-}
-.opt:hover{color:var(--ink)}
-.opt.on{background:var(--accent-soft);border-color:var(--accent-edge);color:var(--accent);font-weight:700}
-
-.lay-loose {--gp:11px;--pd:12px;--rg:5px}
-.lay-std   {--gp:8px; --pd:9px; --rg:2px}
-.lay-tight {--gp:5px; --pd:5px; --rg:0px}
-.sz-std    {--tw:225px;--fs:13.5px;--fb:10.5px}
-.sz-shrink {--tw:172px;--fs:12.5px;--fb:10px}
-.sz-min    {--tw:132px;--fs:11.5px;--fb:9.5px}
-
-.rows.style-list .row{padding:var(--pd) 12px;margin-bottom:var(--rg)}
-.rows.style-list .row .nm .a{font-size:var(--fs)}
-.rows.style-list .row .nm .b{font-size:var(--fb)}
-.rows.style-tab{display:grid;grid-template-columns:repeat(auto-fill,minmax(var(--tw),1fr));gap:var(--gp);align-content:start}
-.tile{
-  border:1px solid var(--line);background:var(--panel-2);border-radius:11px;padding:var(--pd);
-  cursor:pointer;transition:transform .17s cubic-bezier(.2,.7,.3,1), box-shadow .17s, border-color .17s, background .17s;
-}
-.tile:hover{transform:translateY(-3px);box-shadow:var(--shadow);border-color:var(--accent-edge)}
-.tile.on{border-color:var(--accent-edge);background:var(--accent-soft)}
-.tile .th{display:flex;align-items:center;gap:8px;margin-bottom:7px}
-.tile .a{font-size:var(--fs);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
-.tile .b{display:flex;align-items:center;gap:8px}
-.tile .b .ms{width:auto;margin-right:auto}
-.tile .host{font-size:var(--fb);color:var(--muted);margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;direction:ltr;text-align:right}
-.tile .err,.row .err{font-size:10.5px;color:#e0594f;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.sz-min .hidemin{display:none}
-.empty{padding:34px 16px;text-align:center;color:var(--muted);font-size:12.5px;line-height:1.9}
-
-/* ==================== اشتراک‌ها ==================== */
-.addbox{margin-bottom:13px;flex-shrink:0}
-.hint{font-size:10.5px;color:var(--muted);margin-top:8px;line-height:1.7}
-.hint.bad{color:var(--red)}
-.hint.good{color:var(--teal)}
-.addrow{display:flex;gap:9px}
-.addrow input{
-  flex:1;background:var(--panel-2);border:1px solid var(--line);border-radius:9px;
-  padding:11px 13px;color:var(--ink);font-family:inherit;font-size:13px;direction:ltr;text-align:left;
-}
-.addrow input::placeholder{direction:rtl;text-align:right}
-.addrow input:focus{outline:none;border-color:var(--accent-edge)}
-.subgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:13px;align-content:start}
-.sub{cursor:pointer}
-.sub.on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent-edge), var(--shadow)}
-.sub.on .ic{background:var(--accent);color:var(--accent-ink)}
-.usefoot b{color:var(--ink);font-weight:600;font-variant-numeric:tabular-nums}
-.sub .top{display:flex;align-items:flex-start;gap:11px;margin-bottom:12px}
-.sub .ic{width:34px;height:34px;border-radius:10px;flex-shrink:0;display:grid;place-items:center;background:var(--accent-soft);color:var(--accent);font-weight:800;font-size:13px}
-.sub .t{flex:1;min-width:0}
-.sub .t .n{font-size:14.5px;font-weight:700;margin-bottom:3px}
-.sub .t .u{font-size:10.5px;color:var(--muted);direction:ltr;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sub .st{font-size:9.5px;padding:3px 9px;border-radius:20px;font-weight:700;white-space:nowrap}
-.st.live{color:var(--teal);background:color-mix(in srgb, var(--teal) 13%, transparent)}
-.st.old{color:var(--red);background:color-mix(in srgb, var(--red) 13%, transparent)}
-.sub .bar{height:6px;border-radius:3px;background:var(--track);overflow:hidden;margin-bottom:7px}
-.sub .bar i{display:block;height:100%;background:linear-gradient(90deg,var(--teal),var(--accent))}
-.sub .meta{display:flex;justify-content:space-between;font-size:10.5px;color:var(--muted);margin-bottom:13px}
-.sub .acts{display:flex;gap:7px}
-.sub .acts .btn{flex:1;padding:8px 0;font-size:12px;border-radius:8px;display:flex;align-items:center;justify-content:center;gap:6px}
-.sub .acts svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.8}
-
-/* ==================== تنظیمات و مسیریابی ==================== */
-.set{display:flex;align-items:center;gap:14px;padding:13px 0}
-.set + .set{border-top:1px solid var(--line-soft)}
-.set .t{flex:1;min-width:0}
-.set .t .a{font-size:13.5px;font-weight:600;margin-bottom:3px}
-.set .t .b{font-size:11px;color:var(--muted);line-height:1.65}
-.toggle{
-  width:40px;height:22px;border-radius:12px;background:var(--track);position:relative;
-  cursor:pointer;flex-shrink:0;transition:background .18s;
-}
-.toggle::after{
-  content:"";position:absolute;top:3px;right:3px;width:16px;height:16px;border-radius:50%;
-  background:var(--panel);box-shadow:0 1px 3px rgba(0,0,0,.35);transition:all .18s;
-}
-.toggle.on{background:var(--accent)}
-.toggle.on::after{right:auto;left:3px;background:var(--accent-ink)}
-select,input.tin{
-  background:var(--panel-2);border:1px solid var(--line);border-radius:8px;color:var(--ink);
-  font-family:inherit;font-size:12.5px;padding:8px 11px;min-width:140px;
-}
-select:focus,input.tin:focus{outline:none;border-color:var(--accent-edge)}
-.rule{display:flex;align-items:center;gap:11px;padding:10px 12px;border-radius:10px;transition:all .16s;cursor:default}
-.rule:hover{background:var(--panel-2);transform:translateY(-2px);box-shadow:var(--shadow)}
-.rule .no{font-size:10.5px;color:var(--muted);width:24px;font-variant-numeric:tabular-nums}
-.rule .mt{font-size:9.5px;padding:3px 9px;border-radius:6px;font-weight:700;background:var(--panel-2);color:var(--muted);min-width:104px;text-align:center}
-.rule .vl{flex:1;font-size:12.5px;direction:ltr;text-align:right;font-family:Consolas,monospace;color:var(--muted)}
-.rule .out{font-size:11.5px;font-weight:700;min-width:88px;text-align:left}
-.out.prox{color:var(--accent)} .out.dir{color:var(--teal)} .out.rej{color:var(--red)}
-
-/* ==================== گزارش ==================== */
-.log{
-  font-family:Consolas,monospace;font-size:11.5px;line-height:1.95;direction:ltr;text-align:left;
-  color:var(--muted);max-height:calc(100vh - 168px);overflow:auto;padding:12px 14px;
-}
-.log b{color:var(--teal);font-weight:400}
-.log u{color:var(--accent);text-decoration:none}
-.log s{color:var(--red);text-decoration:none}
-.foot{
-  height:30px;border-top:1px solid var(--line);background:var(--rail);display:flex;align-items:center;
-  gap:20px;padding:0 18px;font-size:11px;color:var(--muted);flex-shrink:0;
-}
-.foot .ok{color:var(--teal)}
-</style>
-</head>
-<body>
-<div class="app">
-
-  <!-- ==================== ناوبری ==================== -->
-  <nav class="rail">
-    <div class="brand" title="Nilova">
-      <svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" aria-label="Nilova">
-        <defs>
-          <linearGradient id="nilovaFlow" x1="160" y1="352" x2="352" y2="120" gradientUnits="userSpaceOnUse">
-            <stop stop-color="#4F46E5"/><stop offset=".6" stop-color="#06B6D4"/><stop offset="1" stop-color="#A5F3FC"/>
-          </linearGradient>
-          <filter id="nilovaGlow" x="-50%" y="-50%" width="200%" height="200%">
-            <feGaussianBlur stdDeviation="12" result="b"/>
-            <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
-          </filter>
-        </defs>
-        <line x1="112" y1="256" x2="400" y2="256" stroke="#1E293B" stroke-width="10" stroke-dasharray="16 16" stroke-linecap="round"/>
-        <path d="M160 352 V160 L216 216" fill="none" stroke="url(#nilovaFlow)" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"/>
-        <path d="M296 296 L352 352 V120" fill="none" stroke="url(#nilovaFlow)" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"/>
-        <circle cx="352" cy="120" r="16" fill="#FFFFFF" filter="url(#nilovaGlow)"/>
-      </svg>
-    </div>
-    <div class="nav on" data-go="dash">
-      <svg viewBox="0 0 24 24"><path d="M4 11l8-7 8 7"/><path d="M6 10v10h12V10"/></svg>داشبورد
-    </div>
-    <div class="nav" data-go="servers">
-      <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></svg>سرورها
-    </div>
-    <div class="nav" data-go="subs">
-      <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/><circle cx="19" cy="18" r="2.5"/></svg>اشتراک
-    </div>
-    <div class="nav" data-go="route">
-      <svg viewBox="0 0 24 24"><path d="M6 3v7a4 4 0 0 0 4 4h8"/><path d="M15 11l3 3-3 3"/><path d="M6 21v-4"/></svg>مسیریابی
-    </div>
-    <div class="nav" data-go="logs">
-      <svg viewBox="0 0 24 24"><path d="M5 5h14v14H5z"/><path d="M8 9h5M8 12h8M8 15h6"/></svg>گزارش
-    </div>
-    <div class="nav" data-go="settings">
-      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.2 5.2l2.1 2.1M16.7 16.7l2.1 2.1M18.8 5.2l-2.1 2.1M7.3 16.7l-2.1 2.1"/></svg>تنظیمات
-    </div>
-  </nav>
-
-  <div class="main">
-
-    <!-- ==================== نوار بالا ==================== -->
-    <div class="titlebar">
-      <span class="name"><span class="wordmark">Nilova</span></span>
-      <span class="crumb" id="crumb">داشبورد</span>
-      <div class="themes">
-        <span class="lb">پوسته</span>
-        <span class="sw on" data-theme="dark"  title="تاریک"     style="background:#0d1317"></span>
-        <span class="sw"    data-theme="light" title="سفید"      style="background:#ffffff"></span>
-        <span class="sw"    data-theme="gray"  title="خاکستری"   style="background:#4b545c"></span>
-        <span class="sw"    data-theme="turq"  title="فیروزه‌ای" style="background:#0f7f72"></span>
-      </div>
-    </div>
-
-    <!-- ==================== داشبورد ==================== -->
-    <div class="page" id="p-dash">
-
-      <!-- ردیف اول: سرور فعال (راست) + سرعت شبکه (چپ) -->
-      <div class="grid g-hero">
-        <div class="card">
-          <h2>سرور فعال</h2>
-          <div class="live">
-            <span class="lamp" id="liveLamp"></span>
-            <div class="who">
-              <div class="nm" id="liveName">—</div>
-              <div class="mt" id="liveMeta">—</div>
-            </div>
-            <button class="btn big" id="toggleBtn" onclick="toggleConnect()">اتصال</button>
-          </div>
-        </div>
-
-        <div class="card">
-          <h2>سرعت شبکه <span class="pill">۶۰ ثانیهٔ اخیر</span></h2>
-          <svg class="spark" viewBox="0 0 600 150" preserveAspectRatio="none">
-            <defs><linearGradient id="gd" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stop-color="var(--teal)" stop-opacity=".30"/>
-              <stop offset="100%" stop-color="var(--teal)" stop-opacity="0"/>
-            </linearGradient></defs>
-            <line x1="0" y1="37"  x2="600" y2="37"  stroke="var(--line-soft)"/>
-            <line x1="0" y1="75"  x2="600" y2="75"  stroke="var(--line-soft)"/>
-            <line x1="0" y1="113" x2="600" y2="113" stroke="var(--line-soft)"/>
-            <path fill="url(#gd)" id="spkFill" d=""/>
-            <path fill="none" stroke="var(--teal)" stroke-width="2.4" id="spkDown" d=""/>
-            <path fill="none" stroke="var(--accent)" stroke-width="1.9" stroke-opacity=".85" id="spkUp" d=""/>
-          </svg>
-          <div class="legend">
-            <span><i style="background:var(--teal)"></i>دانلود <b id="spDown">—</b></span>
-            <span><i style="background:var(--accent)"></i>آپلود <b id="spUp">—</b></span>
-            <span style="margin-right:auto">بیشینه <b id="spMax">—</b></span>
-          </div>
-        </div>
-      </div>
-
-      <!-- ردیف دوم: حالت اتصال · نشانی اینترنتی · تست سرعت · ترافیک مصرفی -->
-      <div class="grid g-quad">
-        <div class="card">
-          <h2>حالت اتصال</h2>
-          <div class="seg">
-            <div class="sg on" data-mode="0">پروکسی</div>
-            <div class="sg" data-mode="1">TUN</div>
-          </div>
-          <div class="mdesc" id="mdesc">فقط برنامه‌هایی که پروکسی ویندوز را می‌خوانند.</div>
-        </div>
-
-        <div class="card">
-          <h2>نشانی اینترنتی شما</h2>
-          <div class="ipr">
-            <span class="cc" id="ipProxyCc" style="background:color-mix(in srgb,var(--blue) 16%,transparent);color:var(--blue)">?</span>
-            <div class="tx">
-              <div class="k">از دید سایت‌ها</div>
-              <div class="v" id="ipProxyV">—</div>
-            </div>
-            <span class="chip">مخفی</span>
-          </div>
-          <div class="ipr">
-            <span class="cc" id="ipRealCc" style="background:color-mix(in srgb,var(--red) 16%,transparent);color:var(--red)">?</span>
-            <div class="tx">
-              <div class="k">نشانی واقعی شما</div>
-              <div class="v" id="ipRealV">—</div>
-            </div>
-            <span class="chip">بدون نشتی</span>
-          </div>
-        </div>
-
-        <div class="card">
-          <h2>تست سرعت <span class="pill">fast.com</span></h2>
-          <div class="sp"><span class="n" id="stNum">—</span><span class="u">Mbps دانلود</span></div>
-          <div class="track"><i></i></div>
-          <div class="kv"><span>آپلود</span><b id="stUp">—</b></div>
-          <div class="kv"><span>پینگ</span><b id="stPing">—</b></div>
-          <button class="btn g sm sp-btn" id="stBtn" onclick="runSpeedTest()">تست دوباره</button>
-        </div>
-
-        <div class="card">
-          <h2>ترافیک مصرفی <span class="pill">امروز</span></h2>
-          <div class="use">
-            <div class="dn"><div class="k">دانلود</div><div class="v" id="usDown">—</div></div>
-            <div class="up"><div class="k">آپلود</div><div class="v" id="usUp">—</div></div>
-          </div>
-          <div class="split">
-            <i id="usBarD" style="width:87%;background:var(--teal)"></i>
-            <i id="usBarU" style="width:13%;background:var(--accent)"></i>
-          </div>
-          <div class="usefoot"><span>مجموع <b id="usAll">—</b></span><span>این ماه <b id="usMonth">—</b></span></div>
-        </div>
-      </div>
-
-      <div class="panel">
-        <div class="ph">
-          <h2>سرورها</h2>
-          <span class="c" id="dashSubName">—</span>
-          <input class="search" id="dashSearch" placeholder="جستجو…">
-          <button class="btn g sm" onclick="testAll()">تست همه</button>
-          <div class="gear" id="dashGear" title="تنظیم نمایش">
-            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M18.4 5.6l-1.8 1.8M7.4 16.6l-1.8 1.8"/></svg>
-          </div>
-          <div class="vset" id="dashVset" hidden></div>
-        </div>
-        <div class="rows h-dash" id="dashRows"></div>
-      </div>
-    </div>
-
-    <!-- ==================== سرورها ==================== -->
-    <div class="page" id="p-servers" hidden>
-      <div class="card addbox">
-        <h2>افزودن کانفیگ تکی</h2>
-        <div class="addrow">
-  <input id="cfgUrl" placeholder="vless:// یا vmess:// یا trojan:// یا ss:// — بدون نیاز به اشتراک">
-  <button class="btn g" onclick="pasteCfg()">جایگذاری از کلیپبورد</button>
-  <button class="btn" onclick="addCfg()">افزودن</button>
-</div>
-        <div class="hint" id="cfgHint">هر بار یک کانفیگ. کانفیگ‌های افزوده‌شده در گروه «کانفیگ‌های دستی» می‌نشینند.</div>
-      </div>
-
-      <div class="panel">
-        <div class="ph">
-          <h2>همهٔ سرورها</h2>
-          <span class="c" id="allCount">—</span>
-          <select id="allSub" style="min-width:170px;margin-right:auto"></select>
-          <button class="btn g sm" onclick="testAll()">تست همه</button>
-          <div class="gear" id="allGear" title="تنظیم نمایش">
-            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M18.4 5.6l-1.8 1.8M7.4 16.6l-1.8 1.8"/></svg>
-          </div>
-          <div class="vset" id="allVset" hidden></div>
-        </div>
-        <div class="rows h-full" id="allRows"></div>
-      </div>
-    </div>
-
-    <!-- ==================== اشتراک‌ها ==================== -->
-    <div class="page" id="p-subs" hidden>
-      <div class="card addbox">
-        <h2>افزودن اشتراک تازه</h2>
-        <div class="addrow">
-          <input id="subUrl" placeholder="لینک اشتراک v2ray را اینجا بچسبانید">
-          <button class="btn g" onclick="pasteSub()">جایگذاری از کلیپ‌بورد</button>
-          <button class="btn" onclick="addSub()">افزودن</button>
-        </div>
-        <div class="hint" id="subHint">فقط اشتراک v2ray پذیرفته می‌شود — لینک‌های اشتراک Clash پشتیبانی نمی‌شوند.</div>
-      </div>
-      <div class="subgrid" id="subGrid"></div>
-    </div>
-
-    <!-- ==================== مسیریابی ==================== -->
-    <div class="page" id="p-route" hidden>
-      <div class="grid g-half">
-        <div class="card">
-          <h2>حالت مسیریابی</h2>
-          <div class="seg">
-            <div class="sg on">قانون‌محور</div>
-            <div class="sg">همه از پروکسی</div>
-            <div class="sg">مستقیم</div>
-          </div>
-          <div class="mdesc">هر درخواست بر اساس قوانین زیر تصمیم‌گیری می‌شود. اولین قانونی که بخورد، اجرا می‌شود.</div>
-        </div>
-        <div class="card">
-          <h2>میان‌برهای آماده</h2>
-          <div class="set">
-            <div class="t"><div class="a">سایت‌های ایرانی مستقیم</div><div class="b">دامنه‌های ir. و آی‌پی‌های داخل ایران بدون پروکسی</div></div>
-            <div class="toggle on" onclick="this.classList.toggle('on')"></div>
-          </div>
-          <div class="set">
-            <div class="t"><div class="a">مسدودکردن تبلیغات</div><div class="b">فهرست دامنه‌های تبلیغاتی و ردیاب</div></div>
-            <div class="toggle on" onclick="this.classList.toggle('on')"></div>
-          </div>
-          <div class="set">
-            <div class="t"><div class="a">شبکهٔ محلی مستقیم</div><div class="b">۱۹۲٫۱۶۸ و مانند آن هرگز از پروکسی رد نشود</div></div>
-            <div class="toggle on" onclick="this.classList.toggle('on')"></div>
-          </div>
-        </div>
-      </div>
-
-      <div class="panel">
-        <div class="ph">
-          <h2>قوانین</h2>
-          <span class="c">۹ قانون فعال</span>
-          <input class="search" placeholder="جستجو در قوانین…">
-          <button class="btn sm">افزودن قانون</button>
-        </div>
-        <div class="rows h-full" id="ruleRows"></div>
-      </div>
-    </div>
-
-    <!-- ==================== گزارش ==================== -->
-    <div class="page" id="p-logs" hidden>
-      <div class="panel">
-        <div class="ph">
-          <h2>گزارش زنده</h2>
-          <span class="c" id="logStatus">متوقف</span>
-          <input class="search" id="logFilter" placeholder="فیلتر…">
-          <button class="btn g sm" onclick="clearLog()">پاک‌کردن</button>
-          <button class="btn g sm" onclick="saveLog()">ذخیره در فایل</button>
-        </div>
-        <div class="log" id="logBox"><div class="empty">هنوز خطی ثبت نشده است.</div></div>
-      </div>
-    </div>
-
-    <!-- ==================== تنظیمات ==================== -->
-    <div class="page" id="p-settings" hidden>
-      <div class="grid g-half">
-
-        <div class="card">
-          <h2>عمومی</h2>
-          <div class="set">
-            <div class="t"><div class="a">اجرا هنگام روشن‌شدن ویندوز</div><div class="b">برنامه در پس‌زمینه بالا می‌آید</div></div>
-            <div class="toggle on" onclick="this.classList.toggle('on')"></div>
-          </div>
-          <div class="set">
-            <div class="t"><div class="a">اتصال خودکار</div><div class="b">به آخرین سرور استفاده‌شده وصل شود</div></div>
-            <div class="toggle on" onclick="this.classList.toggle('on')"></div>
-          </div>
-          <div class="set">
-            <div class="t"><div class="a">کوچک‌شدن به سینی</div><div class="b">با بستن پنجره، برنامه بسته نشود</div></div>
-            <div class="toggle on" onclick="this.classList.toggle('on')"></div>
-          </div>
-          <div class="set">
-            <div class="t"><div class="a">زبان</div><div class="b">زبان رابط کاربری</div></div>
-            <select><option>فارسی</option><option>English</option><option>中文</option></select>
-          </div>
-        </div>
-
-        <div class="card">
-          <h2>شبکه</h2>
-          <div class="set">
-            <div class="t"><div class="a">پورت پروکسی ترکیبی</div><div class="b">HTTP و SOCKS روی یک پورت</div></div>
-            <input class="tin" value="10808" style="width:110px;min-width:0">
-          </div>
-          <div class="set">
-            <div class="t"><div class="a">پذیرش اتصال از شبکهٔ محلی — Allow LAN</div><div class="b">گوشی و دستگاه‌های دیگرِ همین شبکه بتوانند از این پروکسی استفاده کنند</div></div>
-            <div class="toggle" id="lanTg" onclick="toggleLan(this)"></div>
-          </div>
-          <div class="set" id="lanRow" style="display:none">
-            <div class="t"><div class="a">نشانی برای دستگاه‌های دیگر</div><div class="b">در گوشی، پروکسی را روی این نشانی تنظیم کنید</div></div>
-            <input class="tin" value="192.168.1.104:10808" style="width:170px;min-width:0;direction:ltr;text-align:left">
-          </div>
-          <div class="set" id="lanAuth" style="display:none">
-            <div class="t"><div class="a">محدودکردن به شبکهٔ خانگی</div><div class="b">فقط بازهٔ ۱۹۲٫۱۶۸ و ۱۰٫x اجازهٔ اتصال دارند</div></div>
-            <div class="toggle on" onclick="this.classList.toggle('on')"></div>
-          </div>
-          <div class="set">
-            <div class="t"><div class="a">IPv6</div><div class="b">اگر شبکه‌تان پشتیبانی نمی‌کند خاموش بگذارید</div></div>
-            <div class="toggle" onclick="this.classList.toggle('on')"></div>
-          </div>
-          <div class="set">
-            <div class="t"><div class="a">حالت TUN</div><div class="b">پوشش کل ترافیک ویندوز — نیازمند دسترسی مدیر</div></div>
-            <div class="toggle" id="tunTg" onclick="toggleTunSetting(this)"></div>
-          </div>
-        </div>
-
-        <div class="card">
-          <h2>DNS</h2>
-          <div class="set">
-            <div class="t"><div class="a">DNS داخلی</div><div class="b">جلوگیری از نشت درخواست‌های دامنه</div></div>
-            <div class="toggle on" onclick="this.classList.toggle('on')"></div>
-          </div>
-          <div class="set">
-            <div class="t"><div class="a">حالت</div><div class="b">fake-ip برای سرعت بیشتر توصیه می‌شود</div></div>
-            <select><option>fake-ip</option><option>redir-host</option></select>
-          </div>
-          <div class="set">
-            <div class="t"><div class="a">سرور اصلی</div><div class="b">درخواست‌های رمزگذاری‌شده</div></div>
-            <input class="tin" value="https://1.1.1.1/dns-query" style="width:190px;min-width:0;direction:ltr;text-align:left">
-          </div>
-          <div class="set">
-            <div class="t"><div class="a">سرور داخلی</div><div class="b">برای دامنه‌های ایرانی</div></div>
-            <input class="tin" value="178.22.122.100" style="width:150px;min-width:0;direction:ltr;text-align:left">
-          </div>
-        </div>
-
-        <div class="card">
-          <h2>اشتراک و بروزرسانی</h2>
-          <div class="set">
-            <div class="t"><div class="a">بروزرسانی خودکار اشتراک‌ها</div><div class="b">در پس‌زمینه انجام می‌شود</div></div>
-            <div class="toggle on" onclick="this.classList.toggle('on')"></div>
-          </div>
-          <div class="set">
-            <div class="t"><div class="a">فاصلهٔ بروزرسانی</div><div class="b">هر چند وقت یک‌بار</div></div>
-            <select><option>هر ۶ ساعت</option><option>هر ۱۲ ساعت</option><option>روزانه</option><option>هفتگی</option></select>
-          </div>
-          <div class="set">
-            <div class="t"><div class="a">تست خودکار تأخیر</div><div class="b">هر ۱۰ دقیقه سرورها سنجیده می‌شوند</div></div>
-            <div class="toggle on" onclick="this.classList.toggle('on')"></div>
-          </div>
-          <div class="set">
-            <div class="t"><div class="a">بررسی نسخهٔ جدید برنامه</div><div class="b">نسخهٔ فعلی ۱٫۰٫۰</div></div>
-            <button class="btn g sm">بررسی کن</button>
-          </div>
-        </div>
-
-        <div class="card">
-          <h2>ظاهر</h2>
-          <div class="set">
-            <div class="t"><div class="a">پوستهٔ برنامه</div><div class="b">از نوار بالا هم قابل تغییر است</div></div>
-            <select id="themeSel">
-              <option value="dark">تاریک</option>
-              <option value="light">سفید</option>
-              <option value="gray">خاکستری</option>
-              <option value="turq">فیروزه‌ای</option>
-            </select>
-          </div>
-          <div class="set">
-            <div class="t"><div class="a">فونت برنامه</div><div class="b">اگر فونت روی ویندوز نصب نباشد، پیش‌فرض جایگزین می‌شود</div></div>
-           <select id="fontSel">
-  <option value='"Segoe UI",Tahoma,sans-serif'>Segoe UI</option>
-  <option value='Tahoma,sans-serif'>Tahoma</option>
-  <option value='Calibri,Tahoma,sans-serif'>Calibri</option>
- </select>
-          </div>
-          <div class="set">
-            <div class="t"><div class="a">اندازهٔ فونت</div><div class="b">اندازهٔ کل نوشته‌های برنامه</div></div>
-            <select id="sizeSel">
-              <option value="12">خیلی کوچک — ۱۲</option>
-              <option value="13">کوچک — ۱۳</option>
-              <option value="14" selected>معمولی — ۱۴</option>
-              <option value="15">بزرگ — ۱۵</option>
-              <option value="16">خیلی بزرگ — ۱۶</option>
-              <option value="18">درشت — ۱۸</option>
-            </select>
-          </div>
-          <div class="set">
-            <div class="t"><div class="a">ضخامت نوشته</div><div class="b">برای صفحه‌نمایش‌های کم‌کنتراست مفید است</div></div>
-            <select id="weightSel">
-              <option value="400">نازک</option>
-              <option value="500" selected>معمولی</option>
-              <option value="600">نیمه‌ضخیم</option>
-            </select>
-          </div>
-          <div class="set">
-            <div class="t"><div class="a">انیمیشن کارت‌ها</div><div class="b">برجسته‌شدن هنگام عبور موس</div></div>
-            <div class="toggle on" onclick="this.classList.toggle('on')"></div>
-          </div>
-          <div class="set">
-            <div class="t"><div class="a">نمایش سرعت در سینی ویندوز</div><div class="b">دریافت و ارسال کنار ساعت</div></div>
-            <div class="toggle on" onclick="this.classList.toggle('on')"></div>
-          </div>
-        </div>
-
-        <div class="card">
-          <h2>پیشرفته</h2>
-          <div class="set">
-            <div class="t"><div class="a">پوشهٔ داده</div><div class="b">محل نگهداری پروفایل‌ها و گزارش‌ها</div></div>
-            <button class="btn g sm">بازکردن پوشه</button>
-          </div>
-          <div class="set">
-            <div class="t"><div class="a">بروزرسانی پایگاه GeoIP</div><div class="b">آخرین بروزرسانی ۱۲ مرداد</div></div>
-            <button class="btn g sm">بروزرسانی</button>
-          </div>
-          <div class="set">
-            <div class="t"><div class="a">بازنشانی تنظیمات</div><div class="b">همه‌چیز به حالت اولیه برمی‌گردد</div></div>
-            <button class="btn dz sm">بازنشانی</button>
-          </div>
-        </div>
-      </div>
-    </div>
-      </div>
-</div>
-
-<script>
-"use strict";
-
-/* ============ حالت واقعی (داخل برنامه) یا نمایشی (پیش‌نمایش) ============ */
-const inTauri = !!(window.__TAURI__ && window.__TAURI__.core);
-let isConnected = false;
-let connStarted = 0;
-const sparkDn = [], sparkUp = [];
-let spMax = 0;
-
-/* ================= کمکی‌ها ================= */
-const FA = "۰۱۲۳۴۵۶۷۸۹";
-const toFa = s => String(s).replace(/\d/g, d => FA[+d]).replace(".", "٫");
-
-/* واحد را خودکار انتخاب می‌کند: بایت، کیلوبایت، مگابایت، گیگابایت، ترابایت */
-function human(bytes, perSec){
-  const U = ["B","KB","MB","GB","TB","PB"];
-  let v = Math.max(0, Number(bytes) || 0), i = 0;
-  while(v >= 1024 && i < U.length - 1){ v /= 1024; i++; }
-  const dec = v >= 100 ? 0 : v >= 10 ? 1 : 2;
-  return { n: v.toFixed(dec), u: U[i] + (perSec ? "/s" : "") };
-}
-const humanTxt = (b, p) => { const h = human(b, p); return h.n + " " + h.u; };
-
-/* ================= داده‌ها ================= */
-const SUBS = [
-  {id:"manual", n:"کانفیگ‌های دستی", u:"", usedB:0, totalB:0, when:"—", live:true, manual:true},
-];
-const SERVERS = [];
-SERVERS.forEach((s,i)=> s.i = i);
-
-const HUE = {NL:"--blue",DE:"--accent",FI:"--blue",UK:"--violet",FR:"--violet",
-             TR:"--red",US:"--teal",SG:"--muted",JP:"--red",CA:"--teal",SE:"--blue",PL:"--accent"};
-
-const subOf = id => SUBS.find(s => s.id === id);
-const countOf = id => SERVERS.filter(s => s.sub === id).length;
-/* رنگ تأخیر: زیر ۱۰۰ سبز پررنگ · ۱۰۰–۲۵۰ سبز کم‌رنگ · ۲۵۰–۳۵۰ زرد · بالای ۳۵۰ قهوه‌ای · قطع قرمز کم‌رنگ */
-const msCls = m => m === null ? "p0" : m < 100 ? "p1" : m <= 250 ? "p2" : m <= 350 ? "p3" : "p4";
-const msTxt = m => m === null ? "ناموفق" : toFa(m) + " ms";
-const esc = t => String(t ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
-const errHtml = s => s.err ? `<div class="err">${esc(s.err)}</div>` : "";
-
-let activeSub = "manual";     // اشتراک انتخاب‌شده
-let activeSrv = 0;        // سرور متصل
-
-/* ================= تنظیم نمایش ================= */
-const VOPTS = {
-  style : [["list","فهرستی"],["tab","کاشی"]],
-  sort  : [["default","پیش‌فرض"],["delay","تأخیر"],["name","نام"]],
-  layout: [["loose","باز"],["std","معمولی"],["tight","فشرده"]],
-  size  : [["std","استاندارد"],["shrink","کوچک"],["min","کمینه"]],
+use windows_sys::Win32::Networking::WinInet::{
+    InternetSetOptionW, INTERNET_OPTION_REFRESH, INTERNET_OPTION_SETTINGS_CHANGED,
 };
-const VLABEL = {style:"نوع نمایش", sort:"مرتب‌سازی", layout:"چیدمان", size:"اندازه"};
+use winreg::HKCU;
 
-const CTX = {
-  dash: {rows:"dashRows", gear:"dashGear", vset:"dashVset", search:"dashSearch",
-         cfg:{style:"list", sort:"default", layout:"std", size:"std"}},
-  all:  {rows:"allRows",  gear:"allGear",  vset:"allVset",  search:null,
-         cfg:{style:"tab",  sort:"delay",   layout:"loose", size:"std"}},
-};
+/// اجرای فرایندهای فرزند بدون باز شدن پنجرهٔ کنسول.
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-function vsetHtml(which){
-  const cfg = CTX[which].cfg;
-  const groups = Object.keys(VOPTS).map(k => `
-    <div class="vgroup">
-      <div class="lb">${VLABEL[k]}</div>
-      <div class="opts">
-        ${VOPTS[k].map(([v,t]) =>
-          `<button class="opt${cfg[k]===v?" on":""}" data-k="${k}" data-v="${v}">${t}</button>`).join("")}
-      </div>
-    </div>`).join("");
-  return `<div class="gh"><b>تنظیم نمایش</b><span class="x" data-close="1">✕</span></div>${groups}`;
+fn silent(cmd: &mut Command) -> &mut Command {
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    cmd
 }
 
-function wireVset(which){
-  const box  = document.getElementById(CTX[which].vset);
-  const gear = document.getElementById(CTX[which].gear);
-  box.innerHTML = vsetHtml(which);
-  gear.addEventListener("click", e => {
-    e.stopPropagation();
-    const open = box.hidden;
-    document.querySelectorAll(".vset").forEach(v => v.hidden = true);
-    document.querySelectorAll(".gear").forEach(g => g.classList.remove("on"));
-    box.hidden = !open;
-    gear.classList.toggle("on", open);
-  });
-  box.addEventListener("click", e => {
-    e.stopPropagation();
-    if(e.target.dataset.close){ box.hidden = true; gear.classList.remove("on"); return; }
-    const btn = e.target.closest(".opt");
-    if(!btn) return;
-    CTX[which].cfg[btn.dataset.k] = btn.dataset.v;
-    box.innerHTML = vsetHtml(which);
-    draw(which);
-  });
-}
-document.addEventListener("click", () => {
-  document.querySelectorAll(".vset").forEach(v => v.hidden = true);
-  document.querySelectorAll(".gear").forEach(g => g.classList.remove("on"));
-});
+/* ================= وضعیت برنامه ================= */
 
-/* ================= رسم سرورها ================= */
-function flagHtml(cc){
-  const c = `var(${HUE[cc]||"--muted"})`;
-  return `<span class="fl" style="background:color-mix(in srgb, ${c} 16%, transparent);color:${c}">${cc}</span>`;
-}
-const dotHtml = m => `<span class="dot ${msCls(m)}"></span>`;
-
-function draw(which){
-  const c    = CTX[which];
-  const cfg  = c.cfg;
-  const box  = document.getElementById(c.rows);
-  const sEl  = c.search ? document.getElementById(c.search) : null;
-  const q    = (sEl ? sEl.value : "").trim().toLowerCase();
-
-  let list = SERVERS.slice();
-    if(which === "dash"){
-    list = list.filter(s => s.sub === activeSub || s.sub === "manual");
-  }else{
-    const pick = document.getElementById("allSub").value;
-    if(pick !== "*") list = list.filter(s => s.sub === pick);
-  }
-  if(q) list = list.filter(s => (s.name + " " + s.host).toLowerCase().includes(q));
-
-  if(cfg.sort === "delay") list.sort((a,b) => (a.ms ?? 1e9) - (b.ms ?? 1e9));
-  if(cfg.sort === "name")  list.sort((a,b) => a.name.localeCompare(b.name));
-
-  box.className = `rows ${which === "dash" ? "h-dash" : "h-full"} `
-                + `style-${cfg.style} lay-${cfg.layout} sz-${cfg.size}`;
-
-  if(!list.length){
-    box.innerHTML = `<div class="empty">سروری برای نمایش نیست.<br>اشتراکی را انتخاب کنید یا جستجو را پاک کنید.</div>`;
-  }else if(cfg.style === "tab"){
-    box.innerHTML = list.map(s => `
-      <div class="tile${s.i===activeSrv?" on":""}" data-i="${s.i}">
-        <div class="th">${flagHtml(s.cc)}<span class="a">${s.name}</span></div>
-        <div class="b">
-          <span class="pr ${s.proto} hidemin">${s.proto.toUpperCase()}</span>
-          ${dotHtml(s.ms)}
-          <span class="ms ${msCls(s.ms)}">${msTxt(s.ms)}</span>
-        </div>
-        <div class="host hidemin">${s.host}</div>
-        ${errHtml(s)}
-      </div>`).join("");
-  }else{
-    box.innerHTML = list.map(s => `
-      <div class="row${s.i===activeSrv?" on":""}" data-i="${s.i}">
-        ${flagHtml(s.cc)}
-        <div class="nm"><div class="a">${s.name}</div><div class="b hidemin">${s.host}</div>${errHtml(s)}</div>
-        <span class="pr ${s.proto} hidemin">${s.proto.toUpperCase()}</span>
-        ${dotHtml(s.ms)}
-        <span class="ms ${msCls(s.ms)}">${msTxt(s.ms)}</span>
-      </div>`).join("");
-  }
-
-  if(which === "dash"){
-    const sb = subOf(activeSub);
-    document.getElementById("dashSubName").textContent =
-      sb ? `${sb.n} — ${toFa(list.length)} سرور` : "";
-  }else{
-    const pick = document.getElementById("allSub").value;
-    const from = pick === "*"
-      ? `از ${toFa(SUBS.filter(s => !s.manual).length)} اشتراک و کانفیگ‌های دستی`
-      : `— ${(subOf(pick) || {}).n || ""}`;
-    document.getElementById("allCount").textContent = `${toFa(list.length)} سرور ${from}`;
-  }
+struct TrafficAcc {
+    loaded: bool,
+    last_up: u64,
+    last_down: u64,
+    last_t: Option<Instant>,
+    next_rollover: Instant,
+    up_speed: f64,
+    down_speed: f64,
+    today_up: u64,
+    today_down: u64,
+    month_up: u64,
+    month_down: u64,
+    total_up: u64,
+    total_down: u64,
+    date: String,
+    month: String,
 }
 
-function pickServer(i){
-  activeSrv = i;
-  updateLive();
-  draw("dash"); draw("all");
-}
-
-["dash","all"].forEach(w => {
-  wireVset(w);
-  if(CTX[w].search)
-    document.getElementById(CTX[w].search).addEventListener("input", () => draw(w));
-  document.getElementById(CTX[w].rows).addEventListener("click", e => {
-    const el = e.target.closest("[data-i]");
-    if(el) pickServer(+el.dataset.i);
-  });
-});
-
-/* ================= اشتراک‌ها ================= */
-const IC_UP = '<svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 5v6h-6"/></svg>';
-const IC_CP = '<svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>';
-const IC_RM = '<svg viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M9 7V5h6v2"/><path d="M6 7l1 13h10l1-13"/></svg>';
-
-function drawSubs(){
-  const list = SUBS.filter(s => !s.manual);
-  if(!list.length){
-    document.getElementById("subGrid").innerHTML =
-      `<div class="empty">هنوز اشتراکی اضافه نشده است.<br>از کادر بالا یک لینک اشتراک v2ray اضافه کنید.</div>`;
-    return;
-  }
-  document.getElementById("subGrid").innerHTML = list.map(s => {
-    const pct = s.totalB ? Math.min(100, s.usedB / s.totalB * 100) : 0;
-    return `
-    <div class="card sub${s.id===activeSub?" on":""}" data-sub="${s.id}">
-      <div class="top">
-        <span class="ic">${s.n.slice(0,1)}</span>
-        <div class="t">
-          <div class="n">${s.n}</div>
-          <div class="u">${s.u}</div>
-        </div>
-        <span class="st ${s.live?"live":"old"}">${s.id===activeSub?"در حال استفاده":(s.live?"فعال":"منقضی")}</span>
-      </div>
-      ${s.totalB ? `<div class="bar"><i style="width:${pct.toFixed(0)}%"></i></div>` : ""}
-      <div class="meta">
-        <span>${s.totalB ? `${humanTxt(s.usedB)} از ${humanTxt(s.totalB)}` : "بدون محدودیت حجم"}</span>
-        <span>${toFa(countOf(s.id))} سرور · ${s.when}</span>
-      </div>
-      <div class="acts">
-        <button class="btn g" data-act="up">${IC_UP}بروزرسانی</button>
-        <button class="btn g" data-act="cp">${IC_CP}کپی</button>
-        <button class="btn dz" data-act="rm">${IC_RM}حذف</button>
-      </div>
-    </div>`;
-  }).join("");
-}
-drawSubs();
-
-document.getElementById("subGrid").addEventListener("click", async e => {
-  const card = e.target.closest("[data-sub]");
-  if(!card) return;
-  const act = e.target.closest("[data-act]");
-  if(act){
-    const id = card.dataset.sub;
-    if(act.dataset.act === "up"){ await updateSub(id); return; }
-    if(act.dataset.act === "cp"){ copySub(id); return; }
-    if(act.dataset.act === "rm"){ delSub(id); return; }
-  }
-  activeSub = card.dataset.sub;
-  const first = SERVERS.find(s => s.sub === activeSub);
-  drawSubs();
-  document.getElementById("allSub").value = activeSub;
-  if(first) pickServer(first.i); else { draw("dash"); draw("all"); }
-});
-
-/* ---------- دکمه‌های هر اشتراک: بروزرسانی · کپی · حذف ---------- */
-
-function reindexServers(){
-  SERVERS.forEach((s, i) => { if(s) s.i = i; });
-}
-
-async function copyText(t){
-  try{
-    if(navigator.clipboard && navigator.clipboard.writeText){
-      await navigator.clipboard.writeText(t);
-      return true;
+impl Default for TrafficAcc {
+    fn default() -> Self {
+        TrafficAcc {
+            loaded: false,
+            last_up: 0,
+            last_down: 0,
+            last_t: None,
+            next_rollover: Instant::now(),
+            up_speed: 0.0,
+            down_speed: 0.0,
+            today_up: 0,
+            today_down: 0,
+            month_up: 0,
+            month_down: 0,
+            total_up: 0,
+            total_down: 0,
+            date: String::new(),
+            month: String::new(),
+        }
     }
-  }catch(e){}
-  try{
-    const ta = document.createElement("textarea");
-    ta.value = t;
-    ta.style.position = "fixed";
-    ta.style.opacity = "0";
-    document.body.appendChild(ta);
-    ta.select();
-    const ok = document.execCommand("copy");
-    ta.remove();
-    return ok;
-  }catch(e){ return false; }
 }
 
-async function copySub(id){
-  const s = subOf(id);
-  if(!s || !s.u){ say("subHint", "این اشتراک لینکی برای کپی ندارد.", "bad"); return; }
-  const ok = await copyText(s.u);
-  say("subHint", ok ? "لینک اشتراک کپی شد." : "کپی نشد — دسترسی کلیپ‌بورد مسدود است.", ok ? "good" : "bad");
+/// پورت‌های آزاد انتخاب‌شده برای هر اتصال — تا با برنامه‌های دیگر (مثل v2rayN) تداخل نکند.
+#[derive(Clone, Copy)]
+struct CorePorts {
+    http: u16,
+    socks: u16,
+    metrics: u16,
 }
 
-/* استخراج لینک‌های کانفیگ از متن اشتراک (متن ساده یا base64) */
-function parseSubText(text){
-  const clean = String(text || "").replace(/^\uFEFF/, "");
-  const lines = clean.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-  let links = lines.filter(l => /^(vless|vmess|trojan|ss):\/\//i.test(l));
-  if(!links.length){
-    const variants = [clean, clean.replace(/-/g, "+").replace(/_/g, "/")];
-    for(const v of variants){
-      try{
-        const b = v.replace(/\s+/g, "");
-        const pad = b.length % 4 ? "=".repeat(4 - b.length % 4) : "";
-        const dec = atob(b + pad);
-        links = dec.split(/\r?\n/).map(l => l.trim()).filter(l => /^(vless|vmess|trojan|ss):\/\//i.test(l));
-        if(links.length) break;
-      }catch(e){}
-    }
-  }
-  return links;
+struct AppState {
+    child: Mutex<Option<Child>>,
+    traffic: Mutex<TrafficAcc>,
+    ports: Mutex<Option<CorePorts>>,
+    log_pos: Mutex<u64>,
 }
 
-async function updateSub(id){
-  const s = subOf(id);
-  if(!s) return;
-  if(!inTauri){ say("subHint", "دریافت اشتراک فقط در برنامهٔ نصب‌شده کار می‌کند.", "bad"); return; }
-  say("subHint", "در حال دریافت اشتراک…", "good");
-  try{
-    const text = await window.__TAURI__.core.invoke("fetch_sub", { url: s.u });
-    const links = parseSubText(text);
-    if(!links.length){
-      say("subHint", "از این اشتراک کانفیگی دریافت نشد — لینک معتبر نیست.", "bad");
-      return;
+const PROXY_OVERRIDE: &str = "<local>";
+const INTERNET_SETTINGS: &str =
+    r"Software\Microsoft\Windows\CurrentVersion\Internet Settings";
+
+/* ================= ساخت پیکربندی ================= */
+
+/// تمام پارامترهای یک لینک VLESS را استخراج می‌کند (tls / reality / ws / grpc).
+struct VlessInfo {
+    id: String,
+    address: String,
+    port: String,
+    network: String,
+    path: String,
+    host: String,
+    security: String,
+    sni: String,
+    fp: String,
+    pbk: String,
+    sid: String,
+    spx: String,
+    flow: String,
+    alpn: String,
+    service_name: String,
+}
+
+fn parse_vless(link: &str) -> Option<VlessInfo> {
+    let rest = link.strip_prefix("vless://")?;
+    let main = rest.split('#').next()?;
+    let at = main.find('@')?;
+    let id = main[..at].to_string();
+    let after = &main[at + 1..];
+    let q = after.find('?');
+    let (host_port, query) = match q {
+        Some(i) => (&after[..i], &after[i + 1..]),
+        None => (after, ""),
+    };
+    let colon = host_port.rfind(':')?;
+    let address = host_port[..colon].to_string();
+    let port = host_port[colon + 1..].to_string();
+
+    let mut info = VlessInfo {
+        id,
+        address,
+        port,
+        network: String::from("tcp"),
+        path: String::new(),
+        host: String::new(),
+        security: String::new(),
+        sni: String::new(),
+        fp: String::new(),
+        pbk: String::new(),
+        sid: String::new(),
+        spx: String::new(),
+        flow: String::new(),
+        alpn: String::new(),
+        service_name: String::new(),
+    };
+    for pair in query.split('&') {
+        let mut it = pair.splitn(2, '=');
+        let k = it.next().unwrap_or("");
+        let v = it.next().unwrap_or("");
+        match k {
+            "path" => info.path = v.replace("%2F", "/").replace("%40", "@"),
+            "host" => info.host = v.replace("%40", "@"),
+            "type" => info.network = v.to_string(),
+            "security" => info.security = v.to_string(),
+            "sni" => info.sni = v.to_string(),
+            "fp" => info.fp = v.to_string(),
+            "pbk" => info.pbk = v.to_string(),
+            "sid" => info.sid = v.to_string(),
+            "spx" => info.spx = v.to_string(),
+            "flow" => info.flow = v.to_string(),
+            "alpn" => info.alpn = v.to_string(),
+            "serviceName" => info.service_name = v.replace("%2F", "/"),
+            _ => {}
+        }
     }
-    // سرورهای قبلی این اشتراک حذف و سرورهای تازه جایگزین می‌شوند
-    for(let i = SERVERS.length - 1; i >= 0; i--){
-      if(SERVERS[i].sub === id) SERVERS.splice(i, 1);
+    Some(info)
+}
+
+/// خروجی VLESS را با تمام تنظیمات امنیتی و انتقال می‌سازد (مشترک پروکسی و TUN).
+fn build_outbound(link: &str) -> Option<serde_json::Value> {
+    let i = parse_vless(link)?;
+    let port: u16 = i.port.parse().ok()?;
+
+    let mut stream = serde_json::Map::new();
+    stream.insert("network".into(), json!(i.network));
+    let security = if i.security.is_empty() { "none" } else { i.security.as_str() };
+    stream.insert("security".into(), json!(security));
+
+    if i.security == "tls" {
+        let mut tls = serde_json::Map::new();
+        let server_name = if !i.sni.is_empty() {
+            i.sni.clone()
+        } else if !i.host.is_empty() {
+            i.host.clone()
+        } else {
+            i.address.clone()
+        };
+        tls.insert("serverName".into(), json!(server_name));
+        if !i.fp.is_empty() {
+            tls.insert("fingerprint".into(), json!(i.fp));
+        }
+        if !i.alpn.is_empty() {
+            let alpn: Vec<&str> = i
+                .alpn
+                .split(',')
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .collect();
+            tls.insert("alpn".into(), json!(alpn));
+        }
+        stream.insert("tlsSettings".into(), json!(tls));
     }
-    reindexServers();
-    let added = 0;
-    links.forEach(l => {
-      const p = parseConfig(l);
-      if(!p) return;
-      p.sub = id;
-      p.ms = null;   // پینگ واقعی با «تست همه» گرفته می‌شود
-      p.i = SERVERS.length;
-      SERVERS.push(p);
-      added++;
+    if i.security == "reality" {
+        let mut rt = serde_json::Map::new();
+        let server_name = if !i.sni.is_empty() { i.sni.clone() } else { i.host.clone() };
+        if !server_name.is_empty() {
+            rt.insert("serverName".into(), json!(server_name));
+        }
+        if !i.fp.is_empty() {
+            rt.insert("fingerprint".into(), json!(i.fp));
+        }
+        if !i.pbk.is_empty() {
+            rt.insert("publicKey".into(), json!(i.pbk));
+        }
+        if !i.sid.is_empty() {
+            rt.insert("shortId".into(), json!(i.sid));
+        }
+        if !i.spx.is_empty() {
+            rt.insert("spiderX".into(), json!(i.spx));
+        }
+        stream.insert("realitySettings".into(), json!(rt));
+    }
+    if i.network == "ws" {
+        let mut ws = serde_json::Map::new();
+        if !i.path.is_empty() {
+            ws.insert("path".into(), json!(i.path));
+        }
+        if !i.host.is_empty() {
+            ws.insert("headers".into(), json!({ "Host": i.host }));
+        }
+        stream.insert("wsSettings".into(), json!(ws));
+    }
+    if i.network == "grpc" {
+        let mut gr = serde_json::Map::new();
+        if !i.service_name.is_empty() {
+            gr.insert("serviceName".into(), json!(i.service_name));
+        }
+        stream.insert("grpcSettings".into(), json!(gr));
+    }
+
+    let mut user = serde_json::Map::new();
+    user.insert("id".into(), json!(i.id));
+    user.insert("encryption".into(), json!("none"));
+    if !i.flow.is_empty() {
+        user.insert("flow".into(), json!(i.flow));
+    }
+
+    Some(json!({
+        "protocol": "vless",
+        "settings": {
+            "vnext": [
+                {
+                    "address": i.address,
+                    "port": port,
+                    "users": [ user ]
+                }
+            ]
+        },
+        "streamSettings": stream
+    }))
+}
+
+/// برچسب «proxy» و بخش آمار (stats/metrics) را به پیکربندی نهایی اضافه می‌کند.
+fn finalize(outbound: serde_json::Value, http: u16, socks: u16, metrics: u16) -> serde_json::Value {
+    let mut o = outbound;
+    if let Some(obj) = o.as_object_mut() {
+        obj.insert("tag".into(), json!("proxy"));
+    }
+    json!({
+        "log": { "loglevel": "warning" },
+        "stats": {},
+        "policy": {
+            "system": {
+                "statsOutboundUplink": true,
+                "statsOutboundDownlink": true
+            }
+        },
+        "metrics": { "listen": format!("127.0.0.1:{}", metrics) },
+        "inbounds": [
+            {
+                "tag": "socks-in",
+                "listen": "127.0.0.1",
+                "port": socks,
+                "protocol": "socks",
+                "settings": { "udp": true }
+            },
+            {
+                "tag": "http-in",
+                "listen": "127.0.0.1",
+                "port": http,
+                "protocol": "http",
+                "settings": {}
+            }
+        ],
+        "outbounds": [o]
+    })
+}
+
+/// پیکربندی حالت پروکسی: ورودی‌های SOCKS و HTTP روی پورت‌های محلی آزاد.
+fn build_config(link: &str, http: u16, socks: u16, metrics: u16) -> Option<String> {
+    let outbound = build_outbound(link)?;
+    Some(finalize(outbound, http, socks, metrics).to_string())
+}
+
+/// پیکربندی حالت TUN: یک آداپتور مجازی که کل ترافیک ویندوز را می‌گیرد.
+fn build_tun_config(link: &str, metrics: u16) -> Option<String> {
+    let outbound = build_outbound(link)?;
+    let mut o = outbound;
+    if let Some(obj) = o.as_object_mut() {
+        obj.insert("tag".into(), json!("proxy"));
+    }
+    let config = json!({
+        "log": { "loglevel": "warning" },
+        "stats": {},
+        "policy": {
+            "system": {
+                "statsOutboundUplink": true,
+                "statsOutboundDownlink": true
+            }
+        },
+        "metrics": { "listen": format!("127.0.0.1:{}", metrics) },
+        "dns": {
+            "servers": ["1.1.1.1", "8.8.8.8"]
+        },
+        "inbounds": [
+            {
+                "tag": "tun-in",
+                "protocol": "tun",
+                "settings": {
+                    "address": ["10.0.0.1", "fd00::1"],
+                    "mtu": 1500,
+                    "autoRoute": true,
+                    "strictRoute": false,
+                    "stack": "system"
+                },
+                "sniffing": {
+                    "enabled": true,
+                    "destOverride": ["http", "tls", "quic"]
+                }
+            }
+        ],
+        "outbounds": [o]
     });
-    s.when = "همین حالا";
-    say("subHint", `اشتراک بروزرسانی شد — ${toFa(added)} کانفیگ دریافت شد.`, "good");
-    drawSubs(); fillSubSelect(); draw("dash"); draw("all");
-  }catch(e){
-    say("subHint", "خطا در دریافت اشتراک: " + String(e), "bad");
-  }
+    Some(config.to_string())
 }
 
-function delSub(id){
-  const s = subOf(id);
-  if(!s) return;
-  let sure = false;
-  try{ sure = confirm(`اشتراک «${s.n}» و سرورهایش حذف شود؟`); }catch(e){ sure = true; }
-  if(!sure) return;
-  SUBS.splice(SUBS.indexOf(s), 1);
-  for(let i = SERVERS.length - 1; i >= 0; i--){
-    if(SERVERS[i].sub === id) SERVERS.splice(i, 1);
-  }
-  reindexServers();
-  if(activeSub === id) activeSub = "manual";
-  if(activeSrv >= SERVERS.length) activeSrv = SERVERS.length ? SERVERS.length - 1 : 0;
-  drawSubs(); fillSubSelect();
-  document.getElementById("allSub").value = activeSub;
-  draw("dash"); draw("all"); updateLive();
-  say("subHint", "اشتراک حذف شد.", "good");
-}
+/* ================= پروکسی سیستم ویندوز ================= */
 
-/* فهرست اشتراک در سربرگ سرورها */
-function fillSubSelect(){
-  const el = document.getElementById("allSub");
-  const keep = el.value;
-  el.innerHTML = `<option value="*">همهٔ اشتراک‌ها</option>` +
-    SUBS.map(s => `<option value="${s.id}">${s.n}</option>`).join("");
-  el.value = SUBS.some(s => s.id === keep) || keep === "*" ? keep : activeSub;
-}
-fillSubSelect();
-document.getElementById("allSub").value = activeSub;
-document.getElementById("allSub").addEventListener("change", () => draw("all"));
-
-function say(id, txt, kind){
-  const el = document.getElementById(id);
-  el.textContent = txt;
-  el.className = "hint" + (kind ? " " + kind : "");
-}
-
-async function pasteSub(){
-  try{
-    const t = await navigator.clipboard.readText();
-    if(t) document.getElementById("subUrl").value = t.trim();
-  }catch(e){
-    document.getElementById("subUrl").focus();
-  }
-}
-async function addSub(){
-  const el = document.getElementById("subUrl");
-  const v  = el.value.trim();
-  if(!v){ say("subHint","لینک اشتراک را وارد کنید.","bad"); return; }
-  if(!/^https?:\/\//i.test(v)){ say("subHint","لینک باید با http یا https شروع شود.","bad"); return; }
-  if(/(clash|\.ya?ml)(\b|$)/i.test(v)){
-    say("subHint","این لینک اشتراک Clash است و پشتیبانی نمی‌شود. فقط اشتراک v2ray بپذیرید.","bad");
-    return;
-  }
-  const id = "s" + Date.now();
-  let name = "اشتراک تازه";
-  try{ name = new URL(v).hostname; }catch(e){}
-  SUBS.splice(SUBS.length - 1, 0, {
-    id, n: name, u: v,
-    usedB: 0, totalB: 0, when: "همین حالا", live: true
-  });
-  el.value = "";
-  drawSubs(); fillSubSelect();
-  await updateSub(id);   // بلافاصله سرورهایش را می‌گیرد
-}
-
-/* ================= افزودن کانفیگ تکی ================= */
-async function pasteCfg(){
-  try{
-    const t = await navigator.clipboard.readText();
-    if(t) document.getElementById("cfgUrl").value = t.trim();
-  }catch(e){
-    document.getElementById("cfgUrl").focus();
-  }
-}
-
-function ccFrom(name, host){
-  const flag = [...name].filter(ch => ch >= "\u{1F1E6}" && ch <= "\u{1F1FF}");
-  if(flag.length >= 2)
-    return flag.slice(0,2).map(ch => String.fromCharCode(ch.codePointAt(0) - 0x1F1E6 + 65)).join("");
-  const lat = (name.match(/[A-Za-z]{2}/) || host.match(/[A-Za-z]{2}/) || ["??"])[0];
-  return lat.toUpperCase();
-}
-
-function parseConfig(link){
-  const s = link.trim();
-  const proto = (s.match(/^(vless|vmess|trojan|ss):\/\//i) || [])[1];
-  if(!proto) return null;
-  const kind = proto.toLowerCase();
-  let host = "", port = "", name = "";
-
-  if(kind === "vmess"){
-    try{
-      const j = JSON.parse(atob(s.slice(8).replace(/-/g,"+").replace(/_/g,"/")));
-      host = j.add || ""; port = j.port || ""; name = j.ps || "";
-    }catch(e){ return null; }
-  }else{
-    const hash = s.indexOf("#");
-    name = hash > -1 ? decodeURIComponent(s.slice(hash + 1)) : "";
-    const body = (hash > -1 ? s.slice(0, hash) : s).slice(kind.length + 3);
-    const hostPart = body.split("?")[0].split("@").pop();
-    const m = hostPart.match(/^\[?([^\]]*)\]?:(\d+)$/) || hostPart.match(/^([^:]+):(\d+)$/);
-    if(!m) return null;
-    host = m[1]; port = m[2];
-  }
-  if(!host || !port) return null;
-  name = name.replace(/[\u{1F1E6}-\u{1F1FF}]/gu, "").trim() || `${host}`;
-  return {cc: ccFrom(name, host), name, host: `${host}:${port}`,
-          proto: kind === "ss" ? "trojan" : kind,
-          ms: 60 + Math.floor(Math.random() * 340), sub: "manual"};
-}
-
-function addCfg(){
-  const el = document.getElementById("cfgUrl");
-  const raw = el.value.trim();
-  if(!raw){ say("cfgHint","کانفیگ را وارد کنید.","bad"); return; }
-
-  const lines = raw.split(/\s+/).filter(Boolean);
-  let ok = 0, bad = 0;
-  lines.forEach(l => {
-    const p = parseConfig(l);
-    if(!p){ bad++; return; }
-    p.i = SERVERS.length;
-    p.raw = l.trim();
-    SERVERS.push(p);
-    ok++;
-  });
-
-  if(!ok){
-    say("cfgHint","کانفیگ خوانده نشد. باید با vless:// یا vmess:// یا trojan:// یا ss:// شروع شود.","bad");
-    return;
-  }
-  el.value = "";
-  say("cfgHint", `${toFa(ok)} کانفیگ افزوده شد${bad ? ` · ${toFa(bad)} مورد نامعتبر بود` : ""}.`, "good");
-  document.getElementById("allSub").value = "manual";
-  pickServer(SERVERS.length - 1);
-  drawSubs(); draw("all"); draw("dash");
-}
-
-/* ================= شمارنده‌های سرعت و ترافیک ================= */
-let dnB = 2.14*1024**3, upB = 0.31*1024**3, monthB = 48.2*1024**3, maxSpd = 0;
-function tick(){
-  const scale = Math.random() < .12 ? Math.random()*90*1024        // افت به کیلوبایت
-              : Math.random() < .08 ? (14 + Math.random()*9)*1024**2 // اوج مگابایتی
-              : (1.4 + Math.random()*5)*1024**2;
-  const dSpd = scale, uSpd = scale * (0.05 + Math.random()*0.12);
-  maxSpd = Math.max(maxSpd, dSpd);
-
-  const hd = human(dSpd, true), hu = human(uSpd, true), hm = human(maxSpd, true);
-  document.getElementById("spDown").textContent = `${hd.n} ${hd.u}`;
-  document.getElementById("spUp").textContent   = `${hu.n} ${hu.u}`;
-  document.getElementById("spMax").textContent  = `${hm.n} ${hm.u}`;
-
-  /* نمودار نمایشی (فقط در پیش‌نمایش) — در برنامهٔ واقعی از دادهٔ حقیقی پر می‌شود */
-  sparkDn.push(dSpd); sparkUp.push(uSpd);
-  if(sparkDn.length > 120) sparkDn.shift();
-  if(sparkUp.length > 120) sparkUp.shift();
-  paintSpark();
-
-  dnB += dSpd * 1.2; upB += uSpd * 1.2; monthB += (dSpd + uSpd) * 1.2;
-  const td = human(dnB), tu = human(upB);
-  document.getElementById("usDown").innerHTML = `${td.n}<span>${td.u}</span>`;
-  document.getElementById("usUp").innerHTML   = `${tu.n}<span>${tu.u}</span>`;
-  document.getElementById("usAll").textContent   = humanTxt(dnB + upB);
-  document.getElementById("usMonth").textContent = humanTxt(monthB);
-  const p = dnB / (dnB + upB) * 100;
-  document.getElementById("usBarD").style.width = p.toFixed(1) + "%";
-  document.getElementById("usBarU").style.width = (100 - p).toFixed(1) + "%";
-}
-if(inTauri){
-  setInterval(pollStats, 1000);
-  setInterval(updateLive, 1000);
-  pollLog();
-  setInterval(pollLog, 1500);
-}else{
-  tick(); setInterval(tick, 1200);
-}
-
-/* ================= گزارش زنده (لاگ واقعی هسته) ================= */
-let logLines = [];
-const logBox = document.getElementById("logBox");
-const logFilterEl = document.getElementById("logFilter");
-
-function renderLog(){
-  if(!logBox) return;
-  const q = (logFilterEl ? logFilterEl.value : "").trim().toLowerCase();
-  const lines = q ? logLines.filter(l => l.toLowerCase().includes(q)) : logLines;
-  const html = lines.slice(-400).map(l => {
-    const low = l.toLowerCase();
-    let cls = "";
-    if(low.includes("error") || low.includes("failed") || low.includes("panic") || low.includes("fatal")) cls = "s";
-    else if(low.includes("warn")) cls = "u";
-    else if(low.includes("info") || low.includes("started") || low.includes("listen") || low.includes("accept")) cls = "b";
-    const body = esc(l);
-    return cls ? `<div><${cls}>${body}</${cls}></div>` : `<div>${body}</div>`;
-  }).join("");
-  logBox.innerHTML = html || `<div class="empty">${q ? "نتیجه‌ای برای فیلتر نیست." : "لاگ خالی است."}</div>`;
-  logBox.scrollTop = logBox.scrollHeight;
-}
-
-async function pollLog(){
-  if(!inTauri) return;
-  try{
-    const r = await window.__TAURI__.core.invoke("read_core_log");
-    if(r && Array.isArray(r.lines) && r.lines.length){
-      logLines.push(...r.lines);
-      if(logLines.length > 2000) logLines.splice(0, logLines.length - 2000);
-      renderLog();
+fn notify_wininet() {
+    unsafe {
+        let _ = InternetSetOptionW(
+            std::ptr::null(),
+            INTERNET_OPTION_SETTINGS_CHANGED,
+            std::ptr::null(),
+            0,
+        );
+        let _ = InternetSetOptionW(std::ptr::null(), INTERNET_OPTION_REFRESH, std::ptr::null(), 0);
     }
-  }catch(e){}
-  const st = document.getElementById("logStatus");
-  if(st) st.textContent = isConnected ? "هسته در حال اجرا" : "متوقف";
 }
 
-async function clearLog(){
-  logLines = [];
-  renderLog();
-  if(inTauri){
-    try{ await window.__TAURI__.core.invoke("core_log_clear"); }catch(e){}
-  }
+/// یک پورت آزاد روی ۱۲۷٫۰٫۰٫۱ پیدا می‌کند.
+fn free_port() -> Result<u16, String> {
+    let l = TcpListener::bind("127.0.0.1:0").map_err(|e| format!("خطا در یافتن پورت آزاد: {}", e))?;
+    let p = l.local_addr().map_err(|e| e.to_string())?.port();
+    drop(l);
+    Ok(p)
 }
 
-async function saveLog(){
-  if(!inTauri){
-    logLines.push("» ذخیرهٔ فایل فقط در برنامهٔ نصب‌شده کار می‌کند.");
-    renderLog();
-    return;
-  }
-  try{
-    const path = await window.__TAURI__.core.invoke("save_core_log");
-    logLines.push("» نسخهٔ ذخیره‌شده: " + path);
-  }catch(e){
-    logLines.push("» خطا در ذخیره: " + String(e));
-  }
-  renderLog();
+fn set_proxy(on: bool, ports: Option<&CorePorts>) -> Result<(), String> {
+    let (key, _) = HKCU
+        .create_subkey(INTERNET_SETTINGS)
+        .map_err(|e| format!("خطا در بازکردن تنظیمات پروکسی: {}", e))?;
+
+    if on {
+        let ports = ports.ok_or("پورت‌های اتصال تنظیم نشده‌اند")?;
+        let server = format!("http=127.0.0.1:{};socks=127.0.0.1:{}", ports.http, ports.socks);
+        key.set_value("ProxyEnable", &1u32)
+            .map_err(|e| format!("خطا در فعال‌کردن پروکسی: {}", e))?;
+        key.set_value("ProxyServer", &server)
+            .map_err(|e| format!("خطا در تنظیم نشانی پروکسی: {}", e))?;
+        key.set_value("ProxyOverride", &PROXY_OVERRIDE)
+            .map_err(|e| format!("خطا در تنظیم استثناهای پروکسی: {}", e))?;
+    } else {
+        // فقط اگر خودِ ما پروکسی را روشن کرده باشیم خاموشش کن — به تنظیمات برنامه‌های دیگر دست نزن
+        if let Some(ports) = ports {
+            let expected = format!("http=127.0.0.1:{};socks=127.0.0.1:{}", ports.http, ports.socks);
+            let ours = key
+                .get_value::<String, _>("ProxyServer")
+                .map(|v| v == expected)
+                .unwrap_or(false);
+            if ours {
+                key.set_value("ProxyEnable", &0u32)
+                    .map_err(|e| format!("خطا در خاموش‌کردن پروکسی: {}", e))?;
+            }
+        }
+    }
+
+    notify_wininet();
+    Ok(())
 }
 
-if(logFilterEl) logFilterEl.addEventListener("input", renderLog);
-
-/* ---------- شروع ---------- */
-if(SERVERS.length) pickServer(0);
-
-/* ---------- قوانین ---------- */
-const RULES = [
-  ["DOMAIN-SUFFIX","ir","DIRECT","dir"],
-  ["GEOIP","ir","DIRECT","dir"],
-  ["GEOIP","private","DIRECT","dir"],
-  ["DOMAIN-KEYWORD","doubleclick","REJECT","rej"],
-  ["DOMAIN-SUFFIX","googlesyndication.com","REJECT","rej"],
-  ["DOMAIN-SUFFIX","github.com","Nilova","prox"],
-  ["DOMAIN-SUFFIX","openai.com","Nilova","prox"],
-  ["PROCESS-NAME","Telegram.exe","Nilova","prox"],
-  ["MATCH","","Nilova","prox"],
-];
-document.getElementById("ruleRows").innerHTML = RULES.map((r,i)=>`
-  <div class="rule">
-    <span class="no">${i+1}</span>
-    <span class="mt">${r[0]}</span>
-    <span class="vl">${r[1] || "—"}</span>
-    <span class="out ${r[3]}">${r[2]}</span>
-  </div>`).join("");
-
-/* ---------- ناوبری ---------- */
-const TITLES = {dash:"داشبورد",servers:"سرورها",subs:"اشتراک‌ها",
-                route:"مسیریابی",logs:"گزارش",settings:"تنظیمات"};
-document.querySelectorAll(".nav").forEach(n=>{
-  n.addEventListener("click",()=>{
-    document.querySelectorAll(".nav").forEach(x=>x.classList.remove("on"));
-    n.classList.add("on");
-    const go = n.dataset.go;
-    document.querySelectorAll(".page").forEach(p=>{p.hidden = p.id !== "p"+"-"+go;});
-    document.getElementById("crumb").textContent = TITLES[go];
-  });
-});
-
-/* ---------- پوسته ---------- */
-function setTheme(t){
-  document.documentElement.dataset.theme = t;
-  document.querySelectorAll(".sw").forEach(s=>s.classList.toggle("on", s.dataset.theme===t));
-  const sel = document.getElementById("themeSel");
-  if(sel) sel.value = t;
-}
-document.querySelectorAll(".sw").forEach(s=>{
-  s.addEventListener("click",()=>setTheme(s.dataset.theme));
-});
-document.getElementById("themeSel").addEventListener("change",e=>setTheme(e.target.value));
-
-/* ---------- Allow LAN ---------- */
-function toggleLan(el){
-  el.classList.toggle("on");
-  const on = el.classList.contains("on");
-  document.getElementById("lanRow").style.display  = on ? "flex" : "none";
-  document.getElementById("lanAuth").style.display = on ? "flex" : "none";
+fn is_admin() -> bool {
+    match silent(&mut Command::new("whoami")).arg("/groups").output() {
+        Ok(o) => String::from_utf8_lossy(&o.stdout).contains("S-1-16-12288"),
+        Err(_) => false,
+    }
 }
 
-async function toggleTunSetting(el){
-  el.classList.toggle("on");
-  const on = el.classList.contains("on");
-  if(!on){
-    if(isConnected && curMode === 1) await disconnectNow();
-    return;
-  }
-  const s = SERVERS[activeSrv];
-  if(!s || !s.raw){
-    say("cfgHint", "اول یک کانفیگ اضافه کن و از لیست انتخابش کن، بعد TUN را روشن کن.", "bad");
-    el.classList.remove("on");
-    return;
-  }
-  curMode = 1;
-  document.querySelectorAll("#p-dash .sg[data-mode]").forEach(x => x.classList.toggle("on", Number(x.dataset.mode) === 1));
-  const md = document.getElementById("mdesc");
-  if(md) md.textContent = "پوشش کل ترافیک ویندوز — نیازمند اجرا به عنوان مدیر.";
-  if(isConnected) await disconnectNow();
-  await connectNow();
+/* ================= اجرای هسته ================= */
+
+fn xray_path() -> Result<PathBuf, String> {
+    let exe = std::env::current_exe().map_err(|_| "خطا در پیدا کردن مسیر برنامه")?;
+    Ok(exe
+        .parent()
+        .ok_or("خطا در مسیر برنامه")?
+        .join("xray.exe"))
 }
 
-/* ---------- فونت ---------- */
-/* ---------- تنظیمات ظاهر ---------- */
-const fontSel = document.getElementById("fontSel");
-const sizeSel = document.getElementById("sizeSel");
-const weightSel = document.getElementById("weightSel");
-
-function applySettings() {
-  let styleTag = document.getElementById("force-style");
-  if (!styleTag) {
-    styleTag = document.createElement("style");
-    styleTag.id = "force-style";
-    document.head.appendChild(styleTag);
-  }
-
-  let font = fontSel.value;
-  let weight = weightSel.value;
-  styleTag.innerHTML = "* { font-family: " + font + " !important; font-weight: " + weight + " !important; }";
-
-  let size = Number(sizeSel.value);
-  document.body.style.zoom = size / 14;
+fn spawn_xray(config_path: &Path, log_path: &Path) -> Result<Child, String> {
+    let xray = xray_path()?;
+    if !xray.exists() {
+        return Err("فایل xray.exe پیدا نشد".into());
+    }
+    // خروجی و خطاهای هسته داخل یک فایل لاگ می‌رود تا اگر بالا نیامد، دلیل واقعی را ببینیم
+    let file = fs::File::create(log_path).map_err(|e| e.to_string())?;
+    let file2 = file.try_clone().map_err(|e| e.to_string())?;
+    let mut cmd = Command::new(&xray);
+    cmd.arg("-c").arg(config_path);
+    cmd.stdout(Stdio::from(file));
+    cmd.stderr(Stdio::from(file2));
+    silent(&mut cmd);
+    cmd.spawn().map_err(|e| format!("خطا در اجرای هسته: {}", e))
 }
 
-fontSel.addEventListener("change", applySettings);
-sizeSel.addEventListener("change", applySettings);
-weightSel.addEventListener("change", applySettings);
+/// آیا کانفیگ با خودِ هسته درست است؟ (xray -test) — پیام خطای دقیق می‌دهد.
+fn xray_test(config_path: &Path) -> Result<(), String> {
+    let xray = xray_path()?;
+    let out = silent(&mut Command::new(&xray))
+        .args(["-test", "-c"])
+        .arg(config_path)
+        .output()
+        .map_err(|e| format!("خطا در اجرای تست هسته: {}", e))?;
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout).trim(),
+        String::from_utf8_lossy(&out.stderr).trim()
+    )
+    .trim()
+    .to_string();
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(if msg.is_empty() {
+            "هسته کانفیگ را نپذیرفت".into()
+        } else {
+            msg
+        })
+    }
+}
 
-/* ---------- حالت اتصال ---------- */
-const MODE_TXT = [
-  "فقط برنامه‌هایی که پروکسی ویندوز را می‌خوانند.",
-  "همهٔ ترافیک ویندوز، شامل بازی‌ها و برنامه‌های مستقل."
-];
-document.querySelectorAll("#p-dash .sg").forEach(sg=>{
-  sg.addEventListener("click",()=>{
-    document.querySelectorAll("#p-dash .sg").forEach(x=>x.classList.remove("on"));
-    sg.classList.add("on");
-    document.getElementById("mdesc").textContent = MODE_TXT[+sg.dataset.mode];
-  });
-});
-document.querySelectorAll("#p-route .sg").forEach(sg=>{
-  sg.addEventListener("click",()=>{
-    document.querySelectorAll("#p-route .sg").forEach(x=>x.classList.remove("on"));
-    sg.classList.add("on");
-  });
-});  /* ---------- حالت اتصال: پروکسی یا TUN ---------- */
-  let curMode = 0;
-  document.querySelectorAll("#p-dash .sg[data-mode]").forEach(sg=>{
-    sg.addEventListener("click",()=>{
-      document.querySelectorAll("#p-dash .sg[data-mode]").forEach(x=>x.classList.remove("on"));
-      sg.classList.add("on");
-      curMode = Number(sg.dataset.mode);
-      const md = document.getElementById("mdesc");
-      if(md) md.textContent = curMode === 1
-        ? "پوشش کل ترافیک ویندوز — نیازمند اجرا به عنوان مدیر."
-        : "فقط برنامه‌هایی که پروکسی ویندوز را می‌خوانند.";
+/// آیا پورت محلی به اتصال پاسخ می‌دهد؟
+fn tcp_ready(port: u16) -> bool {
+    let addr: SocketAddr = match format!("127.0.0.1:{}", port).parse() {
+        Ok(a) => a,
+        Err(_) => return false,
+    };
+    TcpStream::connect_timeout(&addr, Duration::from_millis(250)).is_ok()
+}
+
+/// منتظر بالا آمدن پورت محلی می‌ماند.
+fn wait_port(port: u16, timeout: Duration) -> bool {
+    let start = Instant::now();
+    while start.elapsed() < timeout {
+        if tcp_ready(port) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    false
+}
+
+/// اگر هسته بعد از شروع از کار افتاد، دلیلش را از فایل لاگ می‌خواند.
+fn child_error(mut child: Child, log_path: &Path) -> String {
+    let mut reason = "هسته بالا نیامد؛ احتمالاً کانفیگ نامعتبر است".to_string();
+    match child.try_wait() {
+        Ok(Some(_)) => {}
+        _ => {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+    // کمی صبر کن تا آخرین خط‌های لاگ روی دیسک نوشته شود
+    std::thread::sleep(Duration::from_millis(150));
+    if let Ok(text) = fs::read_to_string(log_path) {
+        let lines: Vec<&str> = text.lines().collect();
+        let start = lines.len().saturating_sub(8);
+        let tail = lines[start..].join("\n");
+        let tail = tail.trim().to_string();
+        if !tail.is_empty() {
+            reason = tail;
+        }
+    }
+    reason
+}
+
+fn start_core(link: &str, tun: bool, state: State<'_, AppState>, with_proxy: bool) -> Result<(), String> {
+    // پورت‌های آزاد برای هر اتصال — تداخل با برنامه‌های دیگر غیرممکن می‌شود
+    let http = free_port()?;
+    let socks = free_port()?;
+    let metrics = free_port()?;
+    let ports = CorePorts { http, socks, metrics };
+
+    let config_json = if tun {
+        build_tun_config(link, metrics).ok_or("لینک VLESS معتبر نیست")?
+    } else {
+        build_config(link, http, socks, metrics).ok_or("لینک VLESS معتبر نیست")?
+    };
+
+    let exe_dir = std::env::current_exe()
+        .map_err(|_| "خطا در پیدا کردن مسیر برنامه")?
+        .parent()
+        .ok_or("خطا در مسیر برنامه")?
+        .to_path_buf();
+    let config_path = exe_dir.join("config.json");
+    let log_path = exe_dir.join("nilova-core.log");
+
+    {
+        let mut file = fs::File::create(&config_path).map_err(|e| e.to_string())?;
+        file.write_all(config_json.as_bytes())
+            .map_err(|e| e.to_string())?;
+    }
+
+    // اعتبارسنجی کانفیگ با خودِ هسته — به‌جای پیام کلی، دلیل دقیق را می‌بینیم
+    if let Err(msg) = xray_test(&config_path) {
+        return Err(format!("کانفیگ نامعتبر است: {}", msg));
+    }
+
+    let mut guard = state.child.lock().map_err(|e| e.to_string())?;
+    if guard.is_some() {
+        return Err("از قبل متصل است".into());
+    }
+
+    let mut child = spawn_xray(&config_path, &log_path)?;
+
+    // صبر کن تا هسته واقعاً بالا بیاید (پورت سرویس آمار)
+    if !wait_port(metrics, Duration::from_secs(8)) {
+        let reason = child_error(child, &log_path);
+        return Err(format!("خطا در شروع اتصال: {}", reason));
+    }
+    // اگر هسته بعد از بالا آمدن پورت از کار افتاده باشد، اتصال را رد کن
+    if let Ok(Some(_)) = child.try_wait() {
+        let reason = child_error(child, &log_path);
+        return Err(format!("خطا در شروع اتصال: {}", reason));
+    }
+
+    if with_proxy {
+        if let Err(e) = set_proxy(true, Some(&ports)) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(e);
+        }
+    }
+
+    *state.ports.lock().map_err(|e| e.to_string())? = Some(ports);
+    *guard = Some(child);
+    Ok(())
+}
+
+/* ================= ابزارهای اندازه‌گیری (از طریق curl) ================= */
+
+/// یک فرمان curl را بدون پنجره اجرا می‌کند و (موفقیت، خروجی) را برمی‌گرداند.
+fn curl_run(args: &[String]) -> Result<(bool, String), String> {
+    let mut cmd = Command::new("curl");
+    silent(&mut cmd);
+    let out = cmd
+        .args(args)
+        .output()
+        .map_err(|e| format!("ابزار curl (curl.exe) در دسترس نیست: {}", e))?;
+    let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    Ok((out.status.success(), text))
+}
+
+fn proxy_arg(proxy: Option<&str>, args: &mut Vec<String>) {
+    if let Some(p) = proxy {
+        args.push("--proxy".into());
+        args.push(p.into());
+    }
+}
+
+/// مدت رفت‌وبرگشت به یک سرورِ سنجش (میلی‌ثانیه) — از داخل پروکسی یا مستقیم.
+fn rtt_ms(proxy: Option<&str>, timeout: u32) -> Result<f64, String> {
+    let mut args: Vec<String> = vec![
+        "-s".into(),
+        "-o".into(),
+        "NUL".into(),
+        "--max-time".into(),
+        timeout.to_string(),
+        "-w".into(),
+        "%{time_total}".into(),
+    ];
+    proxy_arg(proxy, &mut args);
+    args.push("http://www.gstatic.com/generate_204".into());
+    let (ok, out) = curl_run(&args)?;
+    if !ok {
+        return Err("انقضای زمان".into());
+    }
+    let secs: f64 = out.trim().parse().map_err(|_| "خروجی نامعتبر".to_string())?;
+    Ok(secs * 1000.0)
+}
+
+/// تست واقعی یک کانفیگ: هسته را با همان کانفیگ روشن می‌کند و از داخل آن پینگ می‌گیرد.
+fn run_test_one(link: &str) -> Result<serde_json::Value, String> {
+    let outbound = build_outbound(link).ok_or("لینک کانفیگ نامعتبر است")?;
+
+    // یک پورت آزاد پیدا کن
+    let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
+    let port = listener.local_addr().map_err(|e| e.to_string())?.port();
+    drop(listener);
+
+    let config = json!({
+        "log": { "loglevel": "none" },
+        "inbounds": [
+            {
+                "tag": "http-in",
+                "listen": "127.0.0.1",
+                "port": port,
+                "protocol": "http",
+                "settings": {}
+            }
+        ],
+        "outbounds": [outbound]
     });
-  });
 
-  /* ---------- رویدادهای هسته (اتصال خودکار TUN از نمونهٔ مدیر) ---------- */
-  if(inTauri && window.__TAURI__.event){
-    window.__TAURI__.event.listen("core_connected", () => {
-      curMode = 1;
-      document.querySelectorAll("#p-dash .sg[data-mode]").forEach(x => x.classList.toggle("on", Number(x.dataset.mode) === 1));
-      const md = document.getElementById("mdesc");
-      if(md) md.textContent = "پوشش کل ترافیک ویندوز — نیازمند اجرا به عنوان مدیر.";
-      isConnected = true; updateBtn(); connStarted = Date.now();
-      refreshIps();
-      say("cfgHint", "اتصال TUN برقرار شد.", "good");
+    let tmp = std::env::temp_dir().join("nilova_test.json");
+    let tmp_log = std::env::temp_dir().join("nilova_test.log");
+    fs::write(&tmp, config.to_string()).map_err(|e| e.to_string())?;
+
+    let mut child = match spawn_xray(&tmp, &tmp_log) {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = fs::remove_file(&tmp);
+            let _ = fs::remove_file(&tmp_log);
+            return Err(e);
+        }
+    };
+
+    // صبر کن تا پورت محلی بالا بیاید؛ اگر هسته از کار افتاد دلیلش را بگو
+    if !wait_port(port, Duration::from_secs(6)) {
+        let reason = child_error(child, &tmp_log);
+        let _ = fs::remove_file(&tmp);
+        let _ = fs::remove_file(&tmp_log);
+        return Ok(json!({ "ok": false, "ms": null, "err": reason }));
+    }
+
+    // سه پینگ واقعی؛ بهترین نتیجه ملاک است
+    let proxy = format!("http://127.0.0.1:{}", port);
+    let mut best: Option<f64> = None;
+    for _ in 0..3 {
+        if let Ok(ms) = rtt_ms(Some(&proxy), 4) {
+            best = Some(match best {
+                Some(b) => b.min(ms),
+                None => ms,
+            });
+        }
+    }
+
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = fs::remove_file(&tmp);
+    let _ = fs::remove_file(&tmp_log);
+
+    match best {
+        Some(ms) => Ok(json!({ "ok": true, "ms": ms.round() as u64, "err": null })),
+        None => Ok(json!({
+            "ok": false,
+            "ms": null,
+            "err": "اتصال از داخل کانفیگ برقرار نشد؛ سرور در دسترس نیست یا کانفیگ ناقص است"
+        })),
+    }
+}
+
+/* ================= نشانی اینترنتی ================= */
+
+fn fetch_ip_info(proxy: Option<&str>) -> serde_json::Value {
+    // ۱) ip-api.com — اطلاعات کامل کشور و شهر
+    let mut base: Vec<String> = vec!["-s".into(), "--max-time".into(), "8".into()];
+    proxy_arg(proxy, &mut base);
+
+    let mut a1 = base.clone();
+    a1.push("http://ip-api.com/json/".into());
+    if let Ok((true, out)) = curl_run(&a1) {
+        if let Ok(j) = serde_json::from_str::<serde_json::Value>(&out) {
+            if j.get("status").and_then(|s| s.as_str()) == Some("success") {
+                return json!({
+                    "ip": j["query"].as_str().unwrap_or(""),
+                    "country": j["country"].as_str().unwrap_or(""),
+                    "cc": j["countryCode"].as_str().unwrap_or(""),
+                    "city": j["city"].as_str().unwrap_or("")
+                });
+            }
+        }
+    }
+
+    // ۲) ردیابی کلودفلر — معمولاً در ایران هم باز است
+    let mut a2 = base.clone();
+    a2.push("https://www.cloudflare.com/cdn-cgi/trace".into());
+    if let Ok((true, out)) = curl_run(&a2) {
+        let mut ip = "";
+        let mut loc = "";
+        for line in out.lines() {
+            if let Some(v) = line.strip_prefix("ip=") {
+                ip = v;
+            }
+            if let Some(v) = line.strip_prefix("loc=") {
+                loc = v;
+            }
+        }
+        if !ip.is_empty() {
+            return json!({ "ip": ip, "country": "", "cc": loc, "city": "" });
+        }
+    }
+
+    // ۳) ipify — فقط آی‌پی
+    let mut a3 = base;
+    a3.push("https://api.ipify.org?format=json".into());
+    if let Ok((true, out)) = curl_run(&a3) {
+        if let Ok(j) = serde_json::from_str::<serde_json::Value>(&out) {
+            if let Some(ip) = j["ip"].as_str() {
+                return json!({ "ip": ip, "country": "", "cc": "", "city": "" });
+            }
+        }
+    }
+
+    json!({ "ip": "", "country": "", "cc": "", "city": "" })
+}
+
+/* ================= آمار ترافیک (سرویس metrics خودِ Xray) ================= */
+
+fn fetch_stats_json(port: u16) -> Option<serde_json::Value> {
+    let url = format!("http://127.0.0.1:{}/debug/vars", port);
+    let args: Vec<String> = vec![
+        "-s".into(),
+        "--max-time".into(),
+        "3".into(),
+        url,
+    ];
+    let (ok, out) = curl_run(&args).ok()?;
+    if !ok {
+        return None;
+    }
+    serde_json::from_str(&out).ok()
+}
+
+/// مقدار یک شمارندهٔ جهت‌دار خروجی را می‌خواند: outbound>>>proxy>>>traffic>>>{uplink|downlink}
+fn read_stat(stats: &serde_json::Value, dir: &str) -> u64 {
+    stats
+        .get("stats")
+        .and_then(|s| s.get("outbound"))
+        .and_then(|o| o.get("proxy"))
+        .and_then(|p| p.get(dir))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0)
+}
+
+fn stats_file() -> PathBuf {
+    match std::env::var("APPDATA") {
+        Ok(a) => PathBuf::from(a).join("Nilova").join("stats.json"),
+        Err(_) => PathBuf::from("nilova_stats.json"),
+    }
+}
+
+fn load_stats(a: &mut TrafficAcc) {
+    let data = match fs::read_to_string(stats_file()) {
+        Ok(d) => d,
+        Err(_) => return,
+    };
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&data) {
+        a.today_up = v["today_up"].as_u64().unwrap_or(0);
+        a.today_down = v["today_down"].as_u64().unwrap_or(0);
+        a.month_up = v["month_up"].as_u64().unwrap_or(0);
+        a.month_down = v["month_down"].as_u64().unwrap_or(0);
+        a.total_up = v["total_up"].as_u64().unwrap_or(0);
+        a.total_down = v["total_down"].as_u64().unwrap_or(0);
+        a.date = v["date"].as_str().unwrap_or("").to_string();
+        a.month = v["month"].as_str().unwrap_or("").to_string();
+    }
+}
+
+fn save_stats(a: &TrafficAcc) {
+    let v = json!({
+        "date": a.date,
+        "month": a.month,
+        "today_up": a.today_up,
+        "today_down": a.today_down,
+        "month_up": a.month_up,
+        "month_down": a.month_down,
+        "total_up": a.total_up,
+        "total_down": a.total_down
     });
-    window.__TAURI__.event.listen("core_error", e => {
-      say("cfgHint", "خطا در اتصال خودکار TUN: " + String((e && e.payload) || ""), "bad");
-    });
-  }
-
-  /* ---------- اتصال به موتور ---------- */
-
-async function connectNow(){
-  const s = SERVERS[activeSrv];
-  if(!s || !s.raw){
-    say("cfgHint","اول یک کانفیگ اضافه کن و از لیست انتخابش کن.","bad");
-    return;
-  }
-  if(!s.raw.startsWith("vless://")){
-    say("cfgHint","فعلاً فقط کانفیگ VLESS پشتیبانی میشود.","bad");
-    return;
-  }
-  try{
-    const result = await window.__TAURI__.core.invoke(curMode === 1 ? "run_tun" : "run_xray", { link: s.raw });
-    isConnected = true; updateBtn();
-    connStarted = Date.now();
-    refreshIps();
-    say("cfgHint", result, "good");
-  }catch(e){
-    say("cfgHint", String(e), "bad");
-  }
-}
-
-async function disconnectNow(){
-  try{
-    const result = await window.__TAURI__.core.invoke("stop_xray");
-    isConnected = false; updateBtn();
-    connStarted = 0;
-    document.getElementById("spDown").textContent = "—";
-    document.getElementById("spUp").textContent = "—";
-    document.getElementById("ipProxyV").textContent = "—";
-    document.getElementById("ipRealV").textContent = "—";
-    say("cfgHint", result, "good");
-  }catch(e){
-    say("cfgHint", String(e), "bad");
-  }
-}
-
-/* ================= داده‌های واقعی ================= */
-
-function fmtDur(sec){
-  sec = Math.floor(sec);
-  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60);
-  if(h) return `متصل از ${toFa(h)} ساعت و ${toFa(m)} دقیقه پیش`;
-  if(m) return `متصل از ${toFa(m)} دقیقه پیش`;
-  return `متصل از ${toFa(sec)} ثانیه پیش`;
-}
-
-function updateLive(){
-  const s = SERVERS[activeSrv];
-  if(!s){
-    const nm = document.getElementById("liveName");
-    if(nm) nm.textContent = "—";
-    const mt = document.getElementById("liveMeta");
-    if(mt) mt.textContent = "سروری انتخاب نشده است";
-    return;
-  }
-  document.getElementById("liveName").textContent = s.name;
-  const lamp = document.getElementById("liveLamp");
-  const c = isConnected ? "teal" : msCls(s.ms);
-  lamp.style.background = `var(--${c})`;
-  lamp.style.boxShadow  = `0 0 0 4px color-mix(in srgb, var(--${c}) 16%, transparent),`
-                        + `0 0 14px color-mix(in srgb, var(--${c}) 55%, transparent)`;
-  const dur = isConnected
-    ? (connStarted ? fmtDur((Date.now() - connStarted) / 1000) : "")
-    : (!inTauri ? "متصل از ۲ ساعت و ۱۴ دقیقه پیش" : "");
-  document.getElementById("liveMeta").innerHTML =
-    `${s.proto} / reality · تأخیر <b class="ms ${msCls(s.ms)}" style="width:auto">${msTxt(s.ms)}</b>`
-    + (dur ? `<br>${dur}` : "");
-}
-
-function paintSpark(){
-  const f = document.getElementById("spkFill"), d = document.getElementById("spkDown"), u = document.getElementById("spkUp");
-  if(!d) return;
-  const W = 600, H = 150, n = 60;
-  const dn = sparkDn.slice(-n), up = sparkUp.slice(-n);
-  const m = Math.max(1, ...dn, ...up);
-  const path = arr => {
-    if(!arr.length) return "M0,142 L600,142";
-    return arr.map((v,i) => `${i ? "L" : "M"}${(i / (n - 1) * W).toFixed(1)},${(H - 10 - (v / m) * (H - 20)).toFixed(1)}`).join(" ");
-  };
-  const dl = path(dn), ul = path(up);
-  d.setAttribute("d", dl);
-  u.setAttribute("d", ul);
-  f.setAttribute("d", dl + " L600,150 L0,150 Z");
-}
-
-async function pollStats(){
-  if(!isConnected || !inTauri) return;
-  try{
-    const r = await window.__TAURI__.core.invoke("get_traffic");
-    const dn = r.downSpeed || 0, up = r.upSpeed || 0;
-    sparkDn.push(dn); sparkUp.push(up);
-    if(sparkDn.length > 120) sparkDn.shift();
-    if(sparkUp.length > 120) sparkUp.shift();
-    spMax = Math.max(spMax, dn);
-    const hd = human(dn, true), hu = human(up, true), hm = human(spMax, true);
-    document.getElementById("spDown").textContent = `${hd.n} ${hd.u}`;
-    document.getElementById("spUp").textContent   = `${hu.n} ${hu.u}`;
-    document.getElementById("spMax").textContent  = `${hm.n} ${hm.u}`;
-    paintSpark();
-    const td = human(r.todayDown || 0), tu = human(r.todayUp || 0);
-    document.getElementById("usDown").innerHTML  = `${td.n}<span>${td.u}</span>`;
-    document.getElementById("usUp").innerHTML    = `${tu.n}<span>${tu.u}</span>`;
-    document.getElementById("usAll").textContent = humanTxt((r.totalDown||0) + (r.totalUp||0));
-    document.getElementById("usMonth").textContent = humanTxt((r.monthDown||0) + (r.monthUp||0));
-    const tot = (r.todayDown||0) + (r.todayUp||0);
-    const p = tot ? (r.todayDown||0) / tot * 100 : 50;
-    document.getElementById("usBarD").style.width = p.toFixed(1) + "%";
-    document.getElementById("usBarU").style.width = (100 - p).toFixed(1) + "%";
-  }catch(e){}
-}
-
-async function refreshIps(){
-  if(!inTauri || !isConnected) return;
-  try{
-    const r = await window.__TAURI__.core.invoke("get_ips", { mode: curMode });
-    const p = r.proxy || {}, d = r.direct || {};
-    if(p.ip){
-      document.getElementById("ipProxyCc").textContent = p.cc || "?";
-      document.getElementById("ipProxyV").innerHTML = `${p.ip}${p.city ? ` <em>${p.city}</em>` : ""}`;
+    if let Some(dir) = stats_file().parent() {
+        let _ = fs::create_dir_all(dir);
     }
-    if(d.ip){
-      document.getElementById("ipRealCc").textContent = d.cc || "?";
-      const parts = d.ip.split(".");
-      const masked = parts.length === 4
-        ? parts[0] + "." + parts[1] + ".•••.•••"
-        : "•••.•••.•••.•••";
-      document.getElementById("ipRealV").textContent = masked;
+    let _ = fs::write(stats_file(), v.to_string());
+}
+
+/// تاریخ امروز به شکل میلادی — از PowerShell (بدون وابستگی جدید، بدون پنجره).
+fn date_str(format: &str) -> String {
+    let ps_cmd = format!("Get-Date -Format '{}'", format);
+    match silent(&mut Command::new("powershell"))
+        .args(["-NoProfile", "-Command", ps_cmd.as_str()])
+        .output()
+    {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
+        _ => String::new(),
     }
-  }catch(e){}
 }
 
-async function runSpeedTest(){
-  const btn = document.getElementById("stBtn");
-  if(!inTauri){ say("cfgHint", "تست سرعت فقط در برنامهٔ نصب‌شده کار می‌کند.", "bad"); return; }
-  if(!isConnected){ say("cfgHint", "اول یک سرور را وصل کن، بعد تست سرعت بگیر.", "bad"); return; }
-  btn.disabled = true;
-  btn.textContent = "در حال تست…";
-  try{
-    const r = await window.__TAURI__.core.invoke("speed_test", { mode: curMode });
-    document.getElementById("stNum").textContent  = toFa(r.down || 0);
-    document.getElementById("stUp").textContent   = toFa(r.up || 0) + " Mbps";
-    document.getElementById("stPing").textContent = toFa(r.ping || 0) + " ms";
-    say("cfgHint", "تست سرعت انجام شد.", "good");
-  }catch(e){
-    say("cfgHint", String(e), "bad");
-  }
-  btn.disabled = false;
-  btn.textContent = "تست دوباره";
-}
-
-async function testAll(){
-  const btns = document.querySelectorAll("button[onclick='testAll()']");
-  btns.forEach(b => { b.disabled = true; b.textContent = "در حال تست…"; });
-  for(const s of SERVERS){
-    if(!s.raw) continue;
-    try{
-      const r = await window.__TAURI__.core.invoke("test_one", { link: s.raw });
-      s.ms = r.ok ? r.ms : null;
-      s.err = r.ok ? null : (r.err || null);
-    }catch(e){
-      s.ms = null;
-      s.err = String(e);
+/// اگر روز یا ماه عوض شده باشد، شمارنده‌ها را از صفر شروع کن.
+fn rollover(a: &mut TrafficAcc) {
+    let now = Instant::now();
+    if now < a.next_rollover {
+        return;
     }
-    draw("dash"); draw("all");
-  }
-  btns.forEach(b => { b.disabled = false; b.textContent = "تست همه"; });
-  updateLive();
+    a.next_rollover = now + Duration::from_secs(60);
+
+    let today = date_str("yyyy-MM-dd");
+    let month = date_str("yyyy-MM");
+    if !today.is_empty() && a.date != today {
+        a.today_up = 0;
+        a.today_down = 0;
+        a.date = today;
+    }
+    if !month.is_empty() && a.month != month {
+        a.month_up = 0;
+        a.month_down = 0;
+        a.month = month;
+    }
 }
 
-async function toggleConnect(){
-  if(isConnected) await disconnectNow();
-  else await connectNow();
+/* ================= تست سرعت ================= */
+
+/// سرعت انتقال (مگابیت بر ثانیه) از خروجی curl.
+fn transfer_speed(proxy: Option<&str>, url: &str, write_out: &str, timeout: u32) -> Result<f64, String> {
+    let mut args: Vec<String> = vec![
+        "-s".into(),
+        "-o".into(),
+        "NUL".into(),
+        "--max-time".into(),
+        timeout.to_string(),
+        "-w".into(),
+        write_out.into(),
+    ];
+    proxy_arg(proxy, &mut args);
+    args.push(url.into());
+    let (ok, out) = curl_run(&args)?;
+    if !ok {
+        return Err("انقضای زمان در تست".into());
+    }
+    let bps: f64 = out.trim().parse().map_err(|_| "خروجی نامعتبر".to_string())?;
+    Ok(bps * 8.0 / 1_000_000.0)
 }
 
-function updateBtn(){
-  const btn = document.getElementById("toggleBtn");
-  if(btn) btn.textContent = isConnected ? "قطع اتصال" : "اتصال";
+fn upload_speed(proxy: Option<&str>, bytes: usize) -> Result<f64, String> {
+    let path = std::env::temp_dir().join("nilova_up.bin");
+    let chunk = vec![b'x'; 1 << 20];
+    let mut f = fs::File::create(&path).map_err(|e| e.to_string())?;
+    for _ in 0..(bytes / (1 << 20)) {
+        f.write_all(&chunk).map_err(|e| e.to_string())?;
+    }
+    drop(f);
+
+    let file = path.to_string_lossy().replace('\\', "/");
+    let mut args: Vec<String> = vec![
+        "-s".into(),
+        "-o".into(),
+        "NUL".into(),
+        "--max-time".into(),
+        "30".into(),
+        "-w".into(),
+        "%{speed_upload}".into(),
+        "--data-binary".into(),
+        format!("@{}", file),
+    ];
+    proxy_arg(proxy, &mut args);
+    args.push("https://speed.cloudflare.com/__up".into());
+
+    let res = curl_run(&args);
+    let _ = fs::remove_file(&path);
+    let (ok, out) = res?;
+    if !ok {
+        return Err("انقضای زمان در تست آپلود".into());
+    }
+    let bps: f64 = out.trim().parse().map_err(|_| "خروجی نامعتبر".to_string())?;
+    Ok(bps * 8.0 / 1_000_000.0)
 }
-</script>
-</body>
-</html>
+
+fn run_speedtest(mode: u32, proxy: Option<&str>) -> Result<serde_json::Value, String> {
+    // در حالت TUN ترافیک مستقیم از آداپتور مجازی عبور می‌کند؛ در حالت پروکسی از پورت محلی.
+
+    // پینگ: میانگین سه رفت‌وبرگشت
+    let mut pings: Vec<f64> = Vec::new();
+    for _ in 0..3 {
+        if let Ok(ms) = rtt_ms(proxy, 8) {
+            pings.push(ms);
+        }
+    }
+    let ping = if pings.is_empty() {
+        0.0
+    } else {
+        pings.iter().sum::<f64>() / pings.len() as f64
+    };
+
+    // دانلود ۲۵ مگابایت از سرور سنجش کلودفلر
+    let down = transfer_speed(
+        proxy,
+        "https://speed.cloudflare.com/__down?bytes=25000000",
+        "%{speed_download}",
+        30,
+    )
+    .unwrap_or(0.0);
+
+    // آپلود ۸ مگابایت به سرور سنجش کلودفلر
+    let up = upload_speed(proxy, 8 * 1024 * 1024).unwrap_or(0.0);
+
+    Ok(json!({
+        "ping": ping.round() as u64,
+        "down": down.round() as u64,
+        "up": up.round() as u64
+    }))
+}
+
+/* ================= دستورات Tauri ================= */
+
+#[tauri::command]
+fn run_xray(link: String, state: State<'_, AppState>) -> Result<String, String> {
+    start_core(&link, false, state, true)?;
+    Ok("اتصال برقرار شد؛ پروکسی سیستم ویندوز روشن شد".into())
+}
+
+/// اجرای مجدد برنامه با دسترسی مدیر تا پنجرهٔ UAC ویندوز ظاهر شود.
+#[cfg(windows)]
+fn relaunch_elevated(link: &str) -> Result<(), String> {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::GetLastError;
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+
+    let exe = std::env::current_exe().map_err(|_| "خطا در پیدا کردن مسیر برنامه")?;
+    let args = format!("--tun=\"{}\"", link.replace('"', ""));
+    let wide_file: Vec<u16> = OsStr::new(&exe).encode_wide().chain(Some(0)).collect();
+    let wide_verb: Vec<u16> = OsStr::new("runas").encode_wide().chain(Some(0)).collect();
+    let wide_args: Vec<u16> = OsStr::new(&args).encode_wide().chain(Some(0)).collect();
+    let wide_dir: Vec<u16> = OsStr::new("").encode_wide().chain(Some(0)).collect();
+    let ret = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            wide_verb.as_ptr(),
+            wide_file.as_ptr(),
+            wide_args.as_ptr(),
+            wide_dir.as_ptr(),
+            5, // SW_SHOW
+        )
+    };
+    // مقدار کمتر از ۳۲ یعنی شکست (مثلاً کاربر پنجرهٔ UAC را رد کرده است)
+    if ret as usize <= 32 {
+        let code = unsafe { GetLastError() };
+        return Err(format!(
+            "درخواست دسترسی مدیر تأیید نشد (خطای {}). حالت TUN نیازمند تأیید پنجرهٔ ویندوز است.",
+            code
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn relaunch_elevated(_link: &str) -> Result<(), String> {
+    Err("حالت TUN فقط روی ویندوز پشتیبانی می‌شود".into())
+}
+
+#[tauri::command]
+fn run_tun(link: String, state: State<'_, AppState>, app: tauri::AppHandle) -> Result<String, String> {
+    if !is_admin() {
+        // اجرای مجدد با دسترسی مدیر — پنجرهٔ UAC از ویندوز خواسته می‌شود
+        relaunch_elevated(&link)?;
+        // نمونهٔ غیرمدیر بسته می‌شود؛ نمونهٔ مدیر با همان کانفیگ TUN را وصل می‌کند
+        app.exit(0);
+        return Ok("در حال دریافت دسترسی مدیر…".into());
+    }
+    start_core(&link, true, state, false)?;
+    Ok("اتصال TUN برقرار شد؛ کل ترافیک ویندوز از طریق پروکسی عبور می‌کند".into())
+}
+
+#[tauri::command]
+async fn stop_xray(state: State<'_, AppState>) -> Result<String, String> {
+    let mut guard = state.child.lock().map_err(|e| e.to_string())?;
+    if let Some(mut child) = guard.take() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    drop(guard);
+    let ports = state.ports.lock().ok().and_then(|g| g.clone());
+    let _ = set_proxy(false, ports.as_ref());
+    *state.ports.lock().map_err(|e| e.to_string())? = None;
+    Ok("اتصال قطع شد؛ پروکسی سیستم ویندوز خاموش شد".into())
+}
+
+/// تست پینگ واقعی یک کانفیگ.
+#[tauri::command]
+async fn test_one(link: String) -> Result<serde_json::Value, String> {
+    run_test_one(&link)
+}
+
+/// نشانی اینترنتی از دید سایت‌ها (از داخل پروکسی) و نشانی واقعی (مستقیم).
+#[tauri::command]
+async fn get_ips(mode: u32, state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let proxy_str = state
+        .ports
+        .lock()
+        .ok()
+        .and_then(|g| g.clone())
+        .map(|p| format!("http://127.0.0.1:{}", p.http));
+    let proxy = if mode == 1 {
+        None
+    } else {
+        proxy_str.as_deref()
+    };
+    Ok(json!({
+        "proxy": fetch_ip_info(proxy),
+        "direct": fetch_ip_info(None)
+    }))
+}
+
+/// سرعت دانلود، آپلود و پینگ واقعی از طریق اتصال فعلی.
+#[tauri::command]
+async fn speed_test(mode: u32, state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let proxy_str = state
+        .ports
+        .lock()
+        .ok()
+        .and_then(|g| g.clone())
+        .map(|p| format!("http://127.0.0.1:{}", p.http));
+    let proxy = if mode == 1 {
+        None
+    } else {
+        proxy_str.as_deref()
+    };
+    run_speedtest(mode, proxy)
+}
+
+/// دریافت متن خام یک اشتراک — استخراج لینک‌ها در خودِ رابط انجام می‌شود.
+#[tauri::command]
+async fn fetch_sub(url: String) -> Result<String, String> {
+    let mut args: Vec<String> = vec![
+        "-s".into(),
+        "--max-time".into(),
+        "20".into(),
+        "-L".into(),
+        "-A".into(),
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64)".into(),
+    ];
+    args.push(url);
+    let (ok, out) = curl_run(&args)?;
+    if !ok {
+        return Err("دریافت اشتراک ناموفق بود؛ لینک در دسترس نیست یا به اینترنت نیاز دارد".into());
+    }
+    if out.trim().is_empty() {
+        return Err("پاسخ اشتراک خالی بود".into());
+    }
+    Ok(out)
+}
+
+/* ================= گزارش زنده (فایل لاگ هسته) ================= */
+
+/// مسیر فایل لاگ هسته (کنار برنامه).
+fn core_log_path() -> PathBuf {
+    match std::env::current_exe() {
+        Ok(exe) => exe
+            .parent()
+            .map(|p| p.join("nilova-core.log"))
+            .unwrap_or_else(|| PathBuf::from("nilova-core.log")),
+        Err(_) => PathBuf::from("nilova-core.log"),
+    }
+}
+
+/// خواندن خطوط تازهٔ لاگ هسته — فقط خطوطِ کاملِ جدید را برمی‌گرداند.
+#[tauri::command]
+fn read_core_log(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let mut pos = state.log_pos.lock().map_err(|e| e.to_string())?;
+    let data = fs::read(core_log_path()).unwrap_or_default();
+    let mut offset = *pos as usize;
+    if offset > data.len() {
+        offset = 0; // فایل دوباره ساخته شده (اتصال جدید)
+    }
+    let mut lines: Vec<String> = Vec::new();
+    let mut start = offset;
+    let mut i = offset;
+    while i < data.len() {
+        if data[i] == b'\n' {
+            lines.push(
+                String::from_utf8_lossy(&data[start..i])
+                    .trim_end_matches('\r')
+                    .to_string(),
+            );
+            start = i + 1;
+        }
+        i += 1;
+    }
+    *pos = start as u64;
+    Ok(json!({ "offset": *pos, "lines": lines }))
+}
+
+/// پاک‌کردن نمایش لاگ: نشانگر را به انتهای فایل می‌برد تا خطوط قبلی دوباره نیایند.
+#[tauri::command]
+fn core_log_clear(state: State<'_, AppState>) -> Result<String, String> {
+    let len = fs::metadata(core_log_path()).map(|m| m.len()).unwrap_or(0);
+    *state.log_pos.lock().map_err(|e| e.to_string())? = len;
+    Ok("نمایش لاگ پاک شد".into())
+}
+
+/// ذخیرهٔ یک نسخهٔ زمان‌دار از لاگ کنار برنامه.
+#[tauri::command]
+fn save_core_log() -> Result<String, String> {
+    let path = core_log_path();
+    let data = fs::read(&path).map_err(|_| "فایل لاگ وجود ندارد — اول وصل شوید".to_string())?;
+    if data.is_empty() {
+        return Err("لاگ خالی است".into());
+    }
+    let stamp = date_str("yyyyMMdd-HHmmss");
+    let dest = path
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join(format!("nilova-core-{}.log", stamp));
+    fs::write(&dest, &data).map_err(|e| e.to_string())?;
+    Ok(dest.to_string_lossy().into_owned())
+}
+
+/// آمار ترافیک مصرفی و سرعت لحظه‌ای از سرویس metrics هسته.
+#[tauri::command]
+async fn get_traffic(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let mut a = state.traffic.lock().map_err(|e| e.to_string())?;
+    if !a.loaded {
+        load_stats(&mut a);
+        a.loaded = true;
+    }
+    rollover(&mut a);
+
+    let metrics_port = state
+        .ports
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref().map(|p| p.metrics));
+    let stats = match metrics_port.and_then(fetch_stats_json) {
+        Some(v) => v,
+        None => {
+            // هسته در حال اجرا نیست — نمونه‌های قبلی را هم صفر کن تا اتصال بعدی درست محاسبه شود
+            a.up_speed = 0.0;
+            a.down_speed = 0.0;
+            a.last_up = 0;
+            a.last_down = 0;
+            a.last_t = None;
+            return Ok(json!({
+                "connected": false,
+                "upSpeed": 0,
+                "downSpeed": 0,
+                "todayUp": a.today_up,
+                "todayDown": a.today_down,
+                "monthUp": a.month_up,
+                "monthDown": a.month_down,
+                "totalUp": a.total_up,
+                "totalDown": a.total_down
+            }));
+        }
+    };
+
+    let up = read_stat(&stats, "uplink");
+    let down = read_stat(&stats, "downlink");
+
+    // تفاضل از نمونهٔ قبل = سرعت لحظه‌ای و مصرف جدید
+    let dup = up.saturating_sub(a.last_up);
+    let ddown = down.saturating_sub(a.last_down);
+
+    let now = Instant::now();
+    let (mut up_speed, mut down_speed) = (0.0, 0.0);
+    if let Some(t0) = a.last_t {
+        let dt = now.duration_since(t0).as_secs_f64().max(0.05);
+        up_speed = dup as f64 / dt;
+        down_speed = ddown as f64 / dt;
+    }
+    a.last_up = up;
+    a.last_down = down;
+    a.last_t = Some(now);
+    a.up_speed = up_speed;
+    a.down_speed = down_speed;
+
+    a.today_up += dup;
+    a.today_down += ddown;
+    a.month_up += dup;
+    a.month_down += ddown;
+    a.total_up += dup;
+    a.total_down += ddown;
+
+    save_stats(&a);
+
+    Ok(json!({
+        "connected": true,
+        "upSpeed": up_speed,
+        "downSpeed": down_speed,
+        "todayUp": a.today_up,
+        "todayDown": a.today_down,
+        "monthUp": a.month_up,
+        "monthDown": a.month_down,
+        "totalUp": a.total_up,
+        "totalDown": a.total_down
+    }))
+}
+
+fn main() {
+    // آرگومان --tun=... یعنی نمونهٔ مدیر باید همین حالا حالت TUN را وصل کند (از پنجرهٔ UAC آمده)
+    let mut tun_link: Option<String> = None;
+    for a in std::env::args().skip(1) {
+        if let Some(rest) = a.strip_prefix("--tun=") {
+            tun_link = Some(rest.trim_matches('"').to_string());
+        }
+    }
+
+    tauri::Builder::default()
+        .manage(AppState {
+            child: Mutex::new(None),
+            traffic: Mutex::new(TrafficAcc::default()),
+            ports: Mutex::new(None),
+            log_pos: Mutex::new(0),
+        })
+        .setup(move |app| {
+            if let Some(link) = tun_link {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    // کمی صبر کن تا پنجره و رابط بالا بیاید
+                    std::thread::sleep(Duration::from_millis(900));
+                    let state = handle.state::<AppState>();
+                    match start_core(&link, true, state, false) {
+                        Ok(_) => {
+                            let _ = handle.emit("core_connected", ());
+                        }
+                        Err(e) => {
+                            let _ = handle.emit("core_error", e);
+                        }
+                    }
+                });
+            }
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            run_xray,
+            run_tun,
+            stop_xray,
+            test_one,
+            get_ips,
+            speed_test,
+            fetch_sub,
+            read_core_log,
+            core_log_clear,
+            save_core_log,
+            get_traffic
+        ])
+        .build(tauri::generate_context!())
+        .expect("خطا هنگام ساخت برنامه")
+        .run(|app, event| {
+            // هنگام بستن برنامه: هسته را ببند و پروکسی سیستم را خاموش کن
+            if let tauri::RunEvent::Exit = event {
+                let st = app.state::<AppState>();
+                if let Some(mut child) = st.child.lock().ok().and_then(|mut g| g.take()) {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
+                let ports = st.ports.lock().ok().and_then(|g| g.clone());
+                let _ = set_proxy(false, ports.as_ref());
+            }
+        });
+}
