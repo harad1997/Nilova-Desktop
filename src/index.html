@@ -1114,15 +1114,18 @@ async function updateSub(id){
     }
     reindexServers();
     let added = 0;
-    links.forEach(l => {
-      const p = parseConfig(l);
-      if(!p) return;
-      p.sub = id;
-      p.ms = null;   // پینگ واقعی با «تست همه» گرفته می‌شود
-      p.i = SERVERS.length;
-      SERVERS.push(p);
-      added++;
-    });
+   links.forEach(l => {
+  const p = parseConfig(l);
+  if(!p) return;
+
+  p.sub = id;
+  p.ms = null;
+  p.raw = l.trim();
+  p.i = SERVERS.length;
+
+  SERVERS.push(p);
+  added++;
+});
     s.when = "همین حالا";
     say("subHint", `اشتراک بروزرسانی شد — ${toFa(added)} کانفیگ دریافت شد.`, "good");
     drawSubs(); fillSubSelect(); draw("dash"); draw("all");
