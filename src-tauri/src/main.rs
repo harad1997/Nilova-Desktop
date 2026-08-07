@@ -9,7 +9,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use serde_json::json;
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -70,12 +70,21 @@ impl Default for TrafficAcc {
     }
 }
 
+/// پورت‌های آزاد انتخاب‌شده برای هر اتصال — تا با برنامه‌های دیگر (مثل v2rayN) تداخل نکند.
+#[derive(Clone, Copy)]
+struct CorePorts {
+    http: u16,
+    socks: u16,
+    metrics: u16,
+}
+
 struct AppState {
     child: Mutex<Option<Child>>,
     traffic: Mutex<TrafficAcc>,
+    ports: Mutex<Option<CorePorts>>,
+    log_pos: Mutex<u64>,
 }
 
-const PROXY_SERVER: &str = "http=127.0.0.1:10809;socks=127.0.0.1:10808";
 const PROXY_OVERRIDE: &str = "<local>";
 const INTERNET_SETTINGS: &str =
     r"Software\Microsoft\Windows\CurrentVersion\Internet Settings";
@@ -250,7 +259,7 @@ fn build_outbound(link: &str) -> Option<serde_json::Value> {
 }
 
 /// برچسب «proxy» و بخش آمار (stats/metrics) را به پیکربندی نهایی اضافه می‌کند.
-fn finalize(outbound: serde_json::Value) -> serde_json::Value {
+fn finalize(outbound: serde_json::Value, http: u16, socks: u16, metrics: u16) -> serde_json::Value {
     let mut o = outbound;
     if let Some(obj) = o.as_object_mut() {
         obj.insert("tag".into(), json!("proxy"));
@@ -264,19 +273,19 @@ fn finalize(outbound: serde_json::Value) -> serde_json::Value {
                 "statsOutboundDownlink": true
             }
         },
-        "metrics": { "listen": "127.0.0.1:9091" },
+        "metrics": { "listen": format!("127.0.0.1:{}", metrics) },
         "inbounds": [
             {
                 "tag": "socks-in",
                 "listen": "127.0.0.1",
-                "port": 10808,
+                "port": socks,
                 "protocol": "socks",
                 "settings": { "udp": true }
             },
             {
                 "tag": "http-in",
                 "listen": "127.0.0.1",
-                "port": 10809,
+                "port": http,
                 "protocol": "http",
                 "settings": {}
             }
@@ -285,14 +294,14 @@ fn finalize(outbound: serde_json::Value) -> serde_json::Value {
     })
 }
 
-/// پیکربندی حالت پروکسی: ورودی‌های SOCKS و HTTP روی پورت‌های محلی.
-fn build_config(link: &str) -> Option<String> {
+/// پیکربندی حالت پروکسی: ورودی‌های SOCKS و HTTP روی پورت‌های محلی آزاد.
+fn build_config(link: &str, http: u16, socks: u16, metrics: u16) -> Option<String> {
     let outbound = build_outbound(link)?;
-    Some(finalize(outbound).to_string())
+    Some(finalize(outbound, http, socks, metrics).to_string())
 }
 
 /// پیکربندی حالت TUN: یک آداپتور مجازی که کل ترافیک ویندوز را می‌گیرد.
-fn build_tun_config(link: &str) -> Option<String> {
+fn build_tun_config(link: &str, metrics: u16) -> Option<String> {
     let outbound = build_outbound(link)?;
     let mut o = outbound;
     if let Some(obj) = o.as_object_mut() {
@@ -307,7 +316,7 @@ fn build_tun_config(link: &str) -> Option<String> {
                 "statsOutboundDownlink": true
             }
         },
-        "metrics": { "listen": "127.0.0.1:9091" },
+        "metrics": { "listen": format!("127.0.0.1:{}", metrics) },
         "dns": {
             "servers": ["1.1.1.1", "8.8.8.8"]
         },
@@ -347,26 +356,40 @@ fn notify_wininet() {
     }
 }
 
-fn set_proxy(on: bool) -> Result<(), String> {
+/// یک پورت آزاد روی ۱۲۷٫۰٫۰٫۱ پیدا می‌کند.
+fn free_port() -> Result<u16, String> {
+    let l = TcpListener::bind("127.0.0.1:0").map_err(|e| format!("خطا در یافتن پورت آزاد: {}", e))?;
+    let p = l.local_addr().map_err(|e| e.to_string())?.port();
+    drop(l);
+    Ok(p)
+}
+
+fn set_proxy(on: bool, ports: Option<&CorePorts>) -> Result<(), String> {
     let (key, _) = HKCU
         .create_subkey(INTERNET_SETTINGS)
         .map_err(|e| format!("خطا در بازکردن تنظیمات پروکسی: {}", e))?;
 
     if on {
+        let ports = ports.ok_or("پورت‌های اتصال تنظیم نشده‌اند")?;
+        let server = format!("http=127.0.0.1:{};socks=127.0.0.1:{}", ports.http, ports.socks);
         key.set_value("ProxyEnable", &1u32)
             .map_err(|e| format!("خطا در فعال‌کردن پروکسی: {}", e))?;
-        key.set_value("ProxyServer", &PROXY_SERVER)
+        key.set_value("ProxyServer", &server)
             .map_err(|e| format!("خطا در تنظیم نشانی پروکسی: {}", e))?;
         key.set_value("ProxyOverride", &PROXY_OVERRIDE)
             .map_err(|e| format!("خطا در تنظیم استثناهای پروکسی: {}", e))?;
     } else {
-        let ours = key
-            .get_value::<String, _>("ProxyServer")
-            .map(|v| v.contains("127.0.0.1:10808"))
-            .unwrap_or(true);
-        if ours {
-            key.set_value("ProxyEnable", &0u32)
-                .map_err(|e| format!("خطا در خاموش‌کردن پروکسی: {}", e))?;
+        // فقط اگر خودِ ما پروکسی را روشن کرده باشیم خاموشش کن — به تنظیمات برنامه‌های دیگر دست نزن
+        if let Some(ports) = ports {
+            let expected = format!("http=127.0.0.1:{};socks=127.0.0.1:{}", ports.http, ports.socks);
+            let ours = key
+                .get_value::<String, _>("ProxyServer")
+                .map(|v| v == expected)
+                .unwrap_or(false);
+            if ours {
+                key.set_value("ProxyEnable", &0u32)
+                    .map_err(|e| format!("خطا در خاموش‌کردن پروکسی: {}", e))?;
+            }
         }
     }
 
@@ -391,17 +414,46 @@ fn xray_path() -> Result<PathBuf, String> {
         .join("xray.exe"))
 }
 
-fn spawn_xray(config_path: &Path) -> Result<Child, String> {
+fn spawn_xray(config_path: &Path, log_path: &Path) -> Result<Child, String> {
     let xray = xray_path()?;
     if !xray.exists() {
         return Err("فایل xray.exe پیدا نشد".into());
     }
+    // خروجی و خطاهای هسته داخل یک فایل لاگ می‌رود تا اگر بالا نیامد، دلیل واقعی را ببینیم
+    let file = fs::File::create(log_path).map_err(|e| e.to_string())?;
+    let file2 = file.try_clone().map_err(|e| e.to_string())?;
     let mut cmd = Command::new(&xray);
     cmd.arg("-c").arg(config_path);
-    cmd.stdout(Stdio::null());
-    cmd.stderr(Stdio::piped());
+    cmd.stdout(Stdio::from(file));
+    cmd.stderr(Stdio::from(file2));
     silent(&mut cmd);
     cmd.spawn().map_err(|e| format!("خطا در اجرای هسته: {}", e))
+}
+
+/// آیا کانفیگ با خودِ هسته درست است؟ (xray -test) — پیام خطای دقیق می‌دهد.
+fn xray_test(config_path: &Path) -> Result<(), String> {
+    let xray = xray_path()?;
+    let out = silent(&mut Command::new(&xray))
+        .args(["-test", "-c"])
+        .arg(config_path)
+        .output()
+        .map_err(|e| format!("خطا در اجرای تست هسته: {}", e))?;
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout).trim(),
+        String::from_utf8_lossy(&out.stderr).trim()
+    )
+    .trim()
+    .to_string();
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(if msg.is_empty() {
+            "هسته کانفیگ را نپذیرفت".into()
+        } else {
+            msg
+        })
+    }
 }
 
 /// آیا پورت محلی به اتصال پاسخ می‌دهد؟
@@ -425,64 +477,89 @@ fn wait_port(port: u16, timeout: Duration) -> bool {
     false
 }
 
-/// اگر هسته بعد از شروع از کار افتاد، پیام خطای آن را از stderr می‌خواند.
-fn child_error(mut child: Child) -> String {
+/// اگر هسته بعد از شروع از کار افتاد، دلیلش را از فایل لاگ می‌خواند.
+fn child_error(mut child: Child, log_path: &Path) -> String {
     let mut reason = "هسته بالا نیامد؛ احتمالاً کانفیگ نامعتبر است".to_string();
     match child.try_wait() {
-        Ok(Some(_)) => {
-            if let Ok(out) = child.wait_with_output() {
-                let msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
-                if !msg.is_empty() {
-                    reason = msg;
-                }
-            }
-        }
+        Ok(Some(_)) => {}
         _ => {
             let _ = child.kill();
             let _ = child.wait();
         }
     }
+    // کمی صبر کن تا آخرین خط‌های لاگ روی دیسک نوشته شود
+    std::thread::sleep(Duration::from_millis(150));
+    if let Ok(text) = fs::read_to_string(log_path) {
+        let lines: Vec<&str> = text.lines().collect();
+        let start = lines.len().saturating_sub(8);
+        let tail = lines[start..].join("\n");
+        let tail = tail.trim().to_string();
+        if !tail.is_empty() {
+            reason = tail;
+        }
+    }
     reason
 }
 
-fn start_core(config_json: &str, state: State<'_, AppState>, with_proxy: bool) -> Result<(), String> {
+fn start_core(link: &str, tun: bool, state: State<'_, AppState>, with_proxy: bool) -> Result<(), String> {
+    // پورت‌های آزاد برای هر اتصال — تداخل با برنامه‌های دیگر غیرممکن می‌شود
+    let http = free_port()?;
+    let socks = free_port()?;
+    let metrics = free_port()?;
+    let ports = CorePorts { http, socks, metrics };
+
+    let config_json = if tun {
+        build_tun_config(link, metrics).ok_or("لینک VLESS معتبر نیست")?
+    } else {
+        build_config(link, http, socks, metrics).ok_or("لینک VLESS معتبر نیست")?
+    };
+
     let exe_dir = std::env::current_exe()
         .map_err(|_| "خطا در پیدا کردن مسیر برنامه")?
         .parent()
         .ok_or("خطا در مسیر برنامه")?
         .to_path_buf();
-
     let config_path = exe_dir.join("config.json");
-    let mut file = fs::File::create(&config_path).map_err(|e| e.to_string())?;
-    file.write_all(config_json.as_bytes())
-        .map_err(|e| e.to_string())?;
+    let log_path = exe_dir.join("nilova-core.log");
+
+    {
+        let mut file = fs::File::create(&config_path).map_err(|e| e.to_string())?;
+        file.write_all(config_json.as_bytes())
+            .map_err(|e| e.to_string())?;
+    }
+
+    // اعتبارسنجی کانفیگ با خودِ هسته — به‌جای پیام کلی، دلیل دقیق را می‌بینیم
+    if let Err(msg) = xray_test(&config_path) {
+        return Err(format!("کانفیگ نامعتبر است: {}", msg));
+    }
 
     let mut guard = state.child.lock().map_err(|e| e.to_string())?;
     if guard.is_some() {
         return Err("از قبل متصل است".into());
     }
 
-    let mut child = spawn_xray(&config_path)?;
+    let mut child = spawn_xray(&config_path, &log_path)?;
 
-    // صبر کن تا هسته واقعاً بالا بیاید (پورت سرویس آمار ۹۰۹۱)
-    if !wait_port(9091, Duration::from_secs(6)) {
-        let reason = child_error(child);
+    // صبر کن تا هسته واقعاً بالا بیاید (پورت سرویس آمار)
+    if !wait_port(metrics, Duration::from_secs(8)) {
+        let reason = child_error(child, &log_path);
         return Err(format!("خطا در شروع اتصال: {}", reason));
     }
     // اگر هسته بعد از بالا آمدن پورت از کار افتاده باشد، اتصال را رد کن
     if let Ok(Some(_)) = child.try_wait() {
-        let reason = child_error(child);
+        let reason = child_error(child, &log_path);
         return Err(format!("خطا در شروع اتصال: {}", reason));
     }
 
     if with_proxy {
-        if let Err(e) = set_proxy(true) {
+        if let Err(e) = set_proxy(true, Some(&ports)) {
             let _ = child.kill();
             let _ = child.wait();
             return Err(e);
         }
     }
 
+    *state.ports.lock().map_err(|e| e.to_string())? = Some(ports);
     *guard = Some(child);
     Ok(())
 }
@@ -553,20 +630,23 @@ fn run_test_one(link: &str) -> Result<serde_json::Value, String> {
     });
 
     let tmp = std::env::temp_dir().join("nilova_test.json");
+    let tmp_log = std::env::temp_dir().join("nilova_test.log");
     fs::write(&tmp, config.to_string()).map_err(|e| e.to_string())?;
 
-    let mut child = match spawn_xray(&tmp) {
+    let mut child = match spawn_xray(&tmp, &tmp_log) {
         Ok(c) => c,
         Err(e) => {
             let _ = fs::remove_file(&tmp);
+            let _ = fs::remove_file(&tmp_log);
             return Err(e);
         }
     };
 
     // صبر کن تا پورت محلی بالا بیاید؛ اگر هسته از کار افتاد دلیلش را بگو
     if !wait_port(port, Duration::from_secs(6)) {
-        let reason = child_error(child);
+        let reason = child_error(child, &tmp_log);
         let _ = fs::remove_file(&tmp);
+        let _ = fs::remove_file(&tmp_log);
         return Ok(json!({ "ok": false, "ms": null, "err": reason }));
     }
 
@@ -585,6 +665,7 @@ fn run_test_one(link: &str) -> Result<serde_json::Value, String> {
     let _ = child.kill();
     let _ = child.wait();
     let _ = fs::remove_file(&tmp);
+    let _ = fs::remove_file(&tmp_log);
 
     match best {
         Some(ms) => Ok(json!({ "ok": true, "ms": ms.round() as u64, "err": null })),
@@ -653,12 +734,13 @@ fn fetch_ip_info(proxy: Option<&str>) -> serde_json::Value {
 
 /* ================= آمار ترافیک (سرویس metrics خودِ Xray) ================= */
 
-fn fetch_stats_json() -> Option<serde_json::Value> {
+fn fetch_stats_json(port: u16) -> Option<serde_json::Value> {
+    let url = format!("http://127.0.0.1:{}/debug/vars", port);
     let args: Vec<String> = vec![
         "-s".into(),
         "--max-time".into(),
         "3".into(),
-        "http://127.0.0.1:9091/debug/vars".into(),
+        url,
     ];
     let (ok, out) = curl_run(&args).ok()?;
     if !ok {
@@ -810,13 +892,8 @@ fn upload_speed(proxy: Option<&str>, bytes: usize) -> Result<f64, String> {
     Ok(bps * 8.0 / 1_000_000.0)
 }
 
-fn run_speedtest(mode: u32) -> Result<serde_json::Value, String> {
+fn run_speedtest(mode: u32, proxy: Option<&str>) -> Result<serde_json::Value, String> {
     // در حالت TUN ترافیک مستقیم از آداپتور مجازی عبور می‌کند؛ در حالت پروکسی از پورت محلی.
-    let proxy: Option<&str> = if mode == 1 {
-        None
-    } else {
-        Some("http://127.0.0.1:10809")
-    };
 
     // پینگ: میانگین سه رفت‌وبرگشت
     let mut pings: Vec<f64> = Vec::new();
@@ -854,18 +931,60 @@ fn run_speedtest(mode: u32) -> Result<serde_json::Value, String> {
 
 #[tauri::command]
 fn run_xray(link: String, state: State<'_, AppState>) -> Result<String, String> {
-    let config_json = build_config(&link).ok_or("لینک VLESS معتبر نیست")?;
-    start_core(&config_json, state, true)?;
+    start_core(&link, false, state, true)?;
     Ok("اتصال برقرار شد؛ پروکسی سیستم ویندوز روشن شد".into())
 }
 
-#[tauri::command]
-fn run_tun(link: String, state: State<'_, AppState>) -> Result<String, String> {
-    if !is_admin() {
-        return Err("حالت TUN نیازمند اجرای برنامه به عنوان مدیر است. برنامه را ببندید، روی آن کلیک راست کنید و «اجرا به عنوان مدیر» را بزنید.".into());
+/// اجرای مجدد برنامه با دسترسی مدیر تا پنجرهٔ UAC ویندوز ظاهر شود.
+#[cfg(windows)]
+fn relaunch_elevated(link: &str) -> Result<(), String> {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::GetLastError;
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+
+    let exe = std::env::current_exe().map_err(|_| "خطا در پیدا کردن مسیر برنامه")?;
+    let args = format!("--tun=\"{}\"", link.replace('"', ""));
+    let wide_file: Vec<u16> = OsStr::new(&exe).encode_wide().chain(Some(0)).collect();
+    let wide_verb: Vec<u16> = OsStr::new("runas").encode_wide().chain(Some(0)).collect();
+    let wide_args: Vec<u16> = OsStr::new(&args).encode_wide().chain(Some(0)).collect();
+    let wide_dir: Vec<u16> = OsStr::new("").encode_wide().chain(Some(0)).collect();
+    let ret = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            wide_verb.as_ptr(),
+            wide_file.as_ptr(),
+            wide_args.as_ptr(),
+            wide_dir.as_ptr(),
+            5, // SW_SHOW
+        )
+    };
+    // مقدار کمتر از ۳۲ یعنی شکست (مثلاً کاربر پنجرهٔ UAC را رد کرده است)
+    if ret as usize <= 32 {
+        let code = unsafe { GetLastError() };
+        return Err(format!(
+            "درخواست دسترسی مدیر تأیید نشد (خطای {}). حالت TUN نیازمند تأیید پنجرهٔ ویندوز است.",
+            code
+        ));
     }
-    let config_json = build_tun_config(&link).ok_or("لینک VLESS معتبر نیست")?;
-    start_core(&config_json, state, false)?;
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn relaunch_elevated(_link: &str) -> Result<(), String> {
+    Err("حالت TUN فقط روی ویندوز پشتیبانی می‌شود".into())
+}
+
+#[tauri::command]
+fn run_tun(link: String, state: State<'_, AppState>, app: tauri::AppHandle) -> Result<String, String> {
+    if !is_admin() {
+        // اجرای مجدد با دسترسی مدیر — پنجرهٔ UAC از ویندوز خواسته می‌شود
+        relaunch_elevated(&link)?;
+        // نمونهٔ غیرمدیر بسته می‌شود؛ نمونهٔ مدیر با همان کانفیگ TUN را وصل می‌کند
+        app.exit(0);
+        return Ok("در حال دریافت دسترسی مدیر…".into());
+    }
+    start_core(&link, true, state, false)?;
     Ok("اتصال TUN برقرار شد؛ کل ترافیک ویندوز از طریق پروکسی عبور می‌کند".into())
 }
 
@@ -877,7 +996,9 @@ async fn stop_xray(state: State<'_, AppState>) -> Result<String, String> {
         let _ = child.wait();
     }
     drop(guard);
-    let _ = set_proxy(false);
+    let ports = state.ports.lock().ok().and_then(|g| g.clone());
+    let _ = set_proxy(false, ports.as_ref());
+    *state.ports.lock().map_err(|e| e.to_string())? = None;
     Ok("اتصال قطع شد؛ پروکسی سیستم ویندوز خاموش شد".into())
 }
 
@@ -889,11 +1010,17 @@ async fn test_one(link: String) -> Result<serde_json::Value, String> {
 
 /// نشانی اینترنتی از دید سایت‌ها (از داخل پروکسی) و نشانی واقعی (مستقیم).
 #[tauri::command]
-async fn get_ips(mode: u32) -> Result<serde_json::Value, String> {
+async fn get_ips(mode: u32, state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let proxy_str = state
+        .ports
+        .lock()
+        .ok()
+        .and_then(|g| g.clone())
+        .map(|p| format!("http://127.0.0.1:{}", p.http));
     let proxy = if mode == 1 {
         None
     } else {
-        Some("http://127.0.0.1:10809")
+        proxy_str.as_deref()
     };
     Ok(json!({
         "proxy": fetch_ip_info(proxy),
@@ -903,8 +1030,106 @@ async fn get_ips(mode: u32) -> Result<serde_json::Value, String> {
 
 /// سرعت دانلود، آپلود و پینگ واقعی از طریق اتصال فعلی.
 #[tauri::command]
-async fn speed_test(mode: u32) -> Result<serde_json::Value, String> {
-    run_speedtest(mode)
+async fn speed_test(mode: u32, state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let proxy_str = state
+        .ports
+        .lock()
+        .ok()
+        .and_then(|g| g.clone())
+        .map(|p| format!("http://127.0.0.1:{}", p.http));
+    let proxy = if mode == 1 {
+        None
+    } else {
+        proxy_str.as_deref()
+    };
+    run_speedtest(mode, proxy)
+}
+
+/// دریافت متن خام یک اشتراک — استخراج لینک‌ها در خودِ رابط انجام می‌شود.
+#[tauri::command]
+async fn fetch_sub(url: String) -> Result<String, String> {
+    let mut args: Vec<String> = vec![
+        "-s".into(),
+        "--max-time".into(),
+        "20".into(),
+        "-L".into(),
+        "-A".into(),
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64)".into(),
+    ];
+    args.push(url);
+    let (ok, out) = curl_run(&args)?;
+    if !ok {
+        return Err("دریافت اشتراک ناموفق بود؛ لینک در دسترس نیست یا به اینترنت نیاز دارد".into());
+    }
+    if out.trim().is_empty() {
+        return Err("پاسخ اشتراک خالی بود".into());
+    }
+    Ok(out)
+}
+
+/* ================= گزارش زنده (فایل لاگ هسته) ================= */
+
+/// مسیر فایل لاگ هسته (کنار برنامه).
+fn core_log_path() -> PathBuf {
+    match std::env::current_exe() {
+        Ok(exe) => exe
+            .parent()
+            .map(|p| p.join("nilova-core.log"))
+            .unwrap_or_else(|| PathBuf::from("nilova-core.log")),
+        Err(_) => PathBuf::from("nilova-core.log"),
+    }
+}
+
+/// خواندن خطوط تازهٔ لاگ هسته — فقط خطوطِ کاملِ جدید را برمی‌گرداند.
+#[tauri::command]
+fn read_core_log(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let mut pos = state.log_pos.lock().map_err(|e| e.to_string())?;
+    let data = fs::read(core_log_path()).unwrap_or_default();
+    let mut offset = *pos as usize;
+    if offset > data.len() {
+        offset = 0; // فایل دوباره ساخته شده (اتصال جدید)
+    }
+    let mut lines: Vec<String> = Vec::new();
+    let mut start = offset;
+    let mut i = offset;
+    while i < data.len() {
+        if data[i] == b'\n' {
+            lines.push(
+                String::from_utf8_lossy(&data[start..i])
+                    .trim_end_matches('\r')
+                    .to_string(),
+            );
+            start = i + 1;
+        }
+        i += 1;
+    }
+    *pos = start as u64;
+    Ok(json!({ "offset": *pos, "lines": lines }))
+}
+
+/// پاک‌کردن نمایش لاگ: نشانگر را به انتهای فایل می‌برد تا خطوط قبلی دوباره نیایند.
+#[tauri::command]
+fn core_log_clear(state: State<'_, AppState>) -> Result<String, String> {
+    let len = fs::metadata(core_log_path()).map(|m| m.len()).unwrap_or(0);
+    *state.log_pos.lock().map_err(|e| e.to_string())? = len;
+    Ok("نمایش لاگ پاک شد".into())
+}
+
+/// ذخیرهٔ یک نسخهٔ زمان‌دار از لاگ کنار برنامه.
+#[tauri::command]
+fn save_core_log() -> Result<String, String> {
+    let path = core_log_path();
+    let data = fs::read(&path).map_err(|_| "فایل لاگ وجود ندارد — اول وصل شوید".to_string())?;
+    if data.is_empty() {
+        return Err("لاگ خالی است".into());
+    }
+    let stamp = date_str("yyyyMMdd-HHmmss");
+    let dest = path
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join(format!("nilova-core-{}.log", stamp));
+    fs::write(&dest, &data).map_err(|e| e.to_string())?;
+    Ok(dest.to_string_lossy().into_owned())
 }
 
 /// آمار ترافیک مصرفی و سرعت لحظه‌ای از سرویس metrics هسته.
@@ -917,7 +1142,12 @@ async fn get_traffic(state: State<'_, AppState>) -> Result<serde_json::Value, St
     }
     rollover(&mut a);
 
-    let stats = match fetch_stats_json() {
+    let metrics_port = state
+        .ports
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref().map(|p| p.metrics));
+    let stats = match metrics_port.and_then(fetch_stats_json) {
         Some(v) => v,
         None => {
             // هسته در حال اجرا نیست — نمونه‌های قبلی را هم صفر کن تا اتصال بعدی درست محاسبه شود
@@ -983,10 +1213,39 @@ async fn get_traffic(state: State<'_, AppState>) -> Result<serde_json::Value, St
 }
 
 fn main() {
+    // آرگومان --tun=... یعنی نمونهٔ مدیر باید همین حالا حالت TUN را وصل کند (از پنجرهٔ UAC آمده)
+    let mut tun_link: Option<String> = None;
+    for a in std::env::args().skip(1) {
+        if let Some(rest) = a.strip_prefix("--tun=") {
+            tun_link = Some(rest.trim_matches('"').to_string());
+        }
+    }
+
     tauri::Builder::default()
         .manage(AppState {
             child: Mutex::new(None),
             traffic: Mutex::new(TrafficAcc::default()),
+            ports: Mutex::new(None),
+            log_pos: Mutex::new(0),
+        })
+        .setup(move |app| {
+            if let Some(link) = tun_link {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    // کمی صبر کن تا پنجره و رابط بالا بیاید
+                    std::thread::sleep(Duration::from_millis(900));
+                    let state = handle.state::<AppState>();
+                    match start_core(&link, true, state, false) {
+                        Ok(_) => {
+                            let _ = handle.emit("core_connected", ());
+                        }
+                        Err(e) => {
+                            let _ = handle.emit("core_error", e);
+                        }
+                    }
+                });
+            }
+            Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             run_xray,
@@ -995,6 +1254,10 @@ fn main() {
             test_one,
             get_ips,
             speed_test,
+            fetch_sub,
+            read_core_log,
+            core_log_clear,
+            save_core_log,
             get_traffic
         ])
         .build(tauri::generate_context!())
@@ -1007,7 +1270,8 @@ fn main() {
                     let _ = child.kill();
                     let _ = child.wait();
                 }
-                let _ = set_proxy(false);
+                let ports = st.ports.lock().ok().and_then(|g| g.clone());
+                let _ = set_proxy(false, ports.as_ref());
             }
         });
 }
