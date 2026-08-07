@@ -319,7 +319,7 @@ svg.spark{display:block;width:100%;height:92px}
 }
 .addrow input::placeholder{direction:rtl;text-align:right}
 .addrow input:focus{outline:none;border-color:var(--accent-edge)}
-.subgrid{display:grid;grid-template-columns:1fr 1fr;gap:13px}
+.subgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:13px;align-content:start}
 .sub{cursor:pointer}
 .sub.on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent-edge), var(--shadow)}
 .sub.on .ic{background:var(--accent);color:var(--accent-ink)}
@@ -634,31 +634,12 @@ select:focus,input.tin:focus{outline:none;border-color:var(--accent-edge)}
       <div class="panel">
         <div class="ph">
           <h2>گزارش زنده</h2>
-          <span class="c">هسته در حال اجرا</span>
-          <input class="search" placeholder="فیلتر…">
-          <button class="btn g sm">پاک‌کردن</button>
-          <button class="btn g sm">ذخیره در فایل</button>
+          <span class="c" id="logStatus">متوقف</span>
+          <input class="search" id="logFilter" placeholder="فیلتر…">
+          <button class="btn g sm" onclick="clearLog()">پاک‌کردن</button>
+          <button class="btn g sm" onclick="saveLog()">ذخیره در فایل</button>
         </div>
-        <div class="log">
-          <div><b>[14:02:11]</b> core started — mihomo v1.19.2 (windows/amd64)</div>
-          <div><b>[14:02:11]</b> loading profile "Fardad · مرزبان" — 24 proxies</div>
-          <div><b>[14:02:12]</b> proxy group Nilova: 24 members</div>
-          <div><b>[14:02:12]</b> system proxy set to 127.0.0.1:10808</div>
-          <div><b>[14:02:13]</b> url-test Auto: nl-01.edge.net <u>86ms</u></div>
-          <div><b>[14:02:13]</b> url-test Auto: de-04.edge.net <u>94ms</u></div>
-          <div><b>[14:02:14]</b> url-test Auto: sg-05.edge.net <s>timeout</s></div>
-          <div><b>[14:02:14]</b> selected Netherlands · Amsterdam</div>
-          <div><b>[14:03:02]</b> [TCP] api.github.com:443 → Nilova</div>
-          <div><b>[14:03:02]</b> [TCP] fonts.gstatic.com:443 → Nilova</div>
-          <div><b>[14:03:05]</b> [TCP] digikala.com:443 → DIRECT (GEOIP,ir)</div>
-          <div><b>[14:03:07]</b> [UDP] 8.8.8.8:53 → Nilova</div>
-          <div><b>[14:03:19]</b> [TCP] ads.doubleclick.net:443 → <s>REJECT</s></div>
-          <div><b>[14:04:41]</b> [TCP] youtube.com:443 → Nilova</div>
-          <div><b>[14:05:03]</b> subscription "Fardad · مرزبان" updated — 24 proxies</div>
-          <div><b>[14:06:22]</b> speedtest fast.com — down <u>62 Mbps</u> up <u>18 Mbps</u></div>
-          <div><b>[14:08:10]</b> [TCP] cdn.jsdelivr.net:443 → Nilova</div>
-          <div><b>[14:09:44]</b> health check passed — 24/31 alive</div>
-        </div>
+        <div class="log" id="logBox"><div class="empty">هنوز خطی ثبت نشده است.</div></div>
       </div>
     </div>
 
@@ -710,7 +691,7 @@ select:focus,input.tin:focus{outline:none;border-color:var(--accent-edge)}
           </div>
           <div class="set">
             <div class="t"><div class="a">حالت TUN</div><div class="b">پوشش کل ترافیک ویندوز — نیازمند دسترسی مدیر</div></div>
-            <div class="toggle" onclick="this.classList.toggle('on')"></div>
+            <div class="toggle" id="tunTg" onclick="toggleTunSetting(this)"></div>
           </div>
         </div>
 
@@ -848,32 +829,9 @@ const humanTxt = (b, p) => { const h = human(b, p); return h.n + " " + h.u; };
 
 /* ================= داده‌ها ================= */
 const SUBS = [
-  {id:"s1", n:"Fardad · مرزبان", u:"https://fardad-sub.marzgozar.com/sub/OTE1MjMwOV9tb3N0YWZh…",
-   usedB:10.4*1024**3, totalB:30*1024**3, when:"۵ دقیقه پیش", live:true},
-  {id:"s2", n:"لیست عمومی گیت‌هاب", u:"https://raw.githubusercontent.com/10ium/V2rayCollector/main/vless_iran.txt",
-   usedB:0, totalB:0, when:"۲ ساعت پیش", live:true},
-  {id:"s3", n:"اشتراک پشتیبان", u:"https://backup-panel.example.com/sub/abcd1234",
-   usedB:29.1*1024**3, totalB:30*1024**3, when:"۳ روز پیش", live:false},
   {id:"manual", n:"کانفیگ‌های دستی", u:"", usedB:0, totalB:0, when:"—", live:true, manual:true},
 ];
-
-const SERVERS = [
-  {cc:"NL",name:"Netherlands · Amsterdam",host:"nl-01.edge.net",proto:"vless", ms:86,  sub:"s1"},
-  {cc:"DE",name:"Germany · Frankfurt",   host:"de-04.edge.net",proto:"vless", ms:94,  sub:"s1"},
-  {cc:"FI",name:"Finland · Helsinki",    host:"fi-02.edge.net",proto:"trojan",ms:118, sub:"s1"},
-  {cc:"UK",name:"UK · London",           host:"uk-07.edge.net",proto:"vmess", ms:132, sub:"s1"},
-  {cc:"SE",name:"Sweden · Stockholm",    host:"se-03.edge.net",proto:"vless", ms:109, sub:"s1"},
-  {cc:"FR",name:"France · Paris",        host:"fr-01.edge.net",proto:"vless", ms:207, sub:"s1"},
-  {cc:"TR",name:"Turkey · Istanbul",     host:"tr-03.edge.net",proto:"trojan",ms:241, sub:"s2"},
-  {cc:"US",name:"USA · Ashburn",         host:"us-12.edge.net",proto:"vmess", ms:388, sub:"s2"},
-  {cc:"SG",name:"Singapore",             host:"sg-05.edge.net",proto:"vless", ms:null,sub:"s2"},
-  {cc:"JP",name:"Japan · Tokyo",         host:"jp-02.edge.net",proto:"vless", ms:264, sub:"s2"},
-  {cc:"PL",name:"Poland · Warsaw",       host:"pl-01.edge.net",proto:"vmess", ms:147, sub:"s2"},
-  {cc:"DE",name:"Germany · Nuremberg",   host:"de-09.edge.net",proto:"vless", ms:101, sub:"s2"},
-  {cc:"CA",name:"Canada · Toronto",      host:"ca-01.edge.net",proto:"trojan",ms:312, sub:"s3"},
-  {cc:"UK",name:"UK · Manchester",       host:"uk-11.edge.net",proto:"vless", ms:158, sub:"s3"},
-  {cc:"US",name:"USA · Dallas",          host:"us-30.edge.net",proto:"trojan",ms:421, sub:"s3"},
-];
+const SERVERS = [];
 SERVERS.forEach((s,i)=> s.i = i);
 
 const HUE = {NL:"--blue",DE:"--accent",FI:"--blue",UK:"--violet",FR:"--violet",
@@ -887,7 +845,7 @@ const msTxt = m => m === null ? "ناموفق" : toFa(m) + " ms";
 const esc = t => String(t ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
 const errHtml = s => s.err ? `<div class="err">${esc(s.err)}</div>` : "";
 
-let activeSub = "s1";     // اشتراک انتخاب‌شده
+let activeSub = "manual";     // اشتراک انتخاب‌شده
 let activeSrv = 0;        // سرور متصل
 
 /* ================= تنظیم نمایش ================= */
@@ -1008,7 +966,7 @@ function draw(which){
     const pick = document.getElementById("allSub").value;
     const from = pick === "*"
       ? `از ${toFa(SUBS.filter(s => !s.manual).length)} اشتراک و کانفیگ‌های دستی`
-      : `— ${subOf(pick).n}`;
+      : `— ${(subOf(pick) || {}).n || ""}`;
     document.getElementById("allCount").textContent = `${toFa(list.length)} سرور ${from}`;
   }
 }
@@ -1035,7 +993,13 @@ const IC_CP = '<svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11"
 const IC_RM = '<svg viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M9 7V5h6v2"/><path d="M6 7l1 13h10l1-13"/></svg>';
 
 function drawSubs(){
-  document.getElementById("subGrid").innerHTML = SUBS.filter(s => !s.manual).map(s => {
+  const list = SUBS.filter(s => !s.manual);
+  if(!list.length){
+    document.getElementById("subGrid").innerHTML =
+      `<div class="empty">هنوز اشتراکی اضافه نشده است.<br>از کادر بالا یک لینک اشتراک v2ray اضافه کنید.</div>`;
+    return;
+  }
+  document.getElementById("subGrid").innerHTML = list.map(s => {
     const pct = s.totalB ? Math.min(100, s.usedB / s.totalB * 100) : 0;
     return `
     <div class="card sub${s.id===activeSub?" on":""}" data-sub="${s.id}">
@@ -1062,16 +1026,15 @@ function drawSubs(){
 }
 drawSubs();
 
-document.getElementById("subGrid").addEventListener("click", e => {
+document.getElementById("subGrid").addEventListener("click", async e => {
   const card = e.target.closest("[data-sub]");
   if(!card) return;
   const act = e.target.closest("[data-act]");
   if(act){
-    if(act.dataset.act === "cp"){
-      const s = subOf(card.dataset.sub);
-      if(navigator.clipboard) navigator.clipboard.writeText(s.u).catch(()=>{});
-    }
-    return;
+    const id = card.dataset.sub;
+    if(act.dataset.act === "up"){ await updateSub(id); return; }
+    if(act.dataset.act === "cp"){ copySub(id); return; }
+    if(act.dataset.act === "rm"){ delSub(id); return; }
   }
   activeSub = card.dataset.sub;
   const first = SERVERS.find(s => s.sub === activeSub);
@@ -1079,6 +1042,113 @@ document.getElementById("subGrid").addEventListener("click", e => {
   document.getElementById("allSub").value = activeSub;
   if(first) pickServer(first.i); else { draw("dash"); draw("all"); }
 });
+
+/* ---------- دکمه‌های هر اشتراک: بروزرسانی · کپی · حذف ---------- */
+
+function reindexServers(){
+  SERVERS.forEach((s, i) => { if(s) s.i = i; });
+}
+
+async function copyText(t){
+  try{
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      await navigator.clipboard.writeText(t);
+      return true;
+    }
+  }catch(e){}
+  try{
+    const ta = document.createElement("textarea");
+    ta.value = t;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand("copy");
+    ta.remove();
+    return ok;
+  }catch(e){ return false; }
+}
+
+async function copySub(id){
+  const s = subOf(id);
+  if(!s || !s.u){ say("subHint", "این اشتراک لینکی برای کپی ندارد.", "bad"); return; }
+  const ok = await copyText(s.u);
+  say("subHint", ok ? "لینک اشتراک کپی شد." : "کپی نشد — دسترسی کلیپ‌بورد مسدود است.", ok ? "good" : "bad");
+}
+
+/* استخراج لینک‌های کانفیگ از متن اشتراک (متن ساده یا base64) */
+function parseSubText(text){
+  const clean = String(text || "").replace(/^\uFEFF/, "");
+  const lines = clean.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  let links = lines.filter(l => /^(vless|vmess|trojan|ss):\/\//i.test(l));
+  if(!links.length){
+    const variants = [clean, clean.replace(/-/g, "+").replace(/_/g, "/")];
+    for(const v of variants){
+      try{
+        const b = v.replace(/\s+/g, "");
+        const pad = b.length % 4 ? "=".repeat(4 - b.length % 4) : "";
+        const dec = atob(b + pad);
+        links = dec.split(/\r?\n/).map(l => l.trim()).filter(l => /^(vless|vmess|trojan|ss):\/\//i.test(l));
+        if(links.length) break;
+      }catch(e){}
+    }
+  }
+  return links;
+}
+
+async function updateSub(id){
+  const s = subOf(id);
+  if(!s) return;
+  if(!inTauri){ say("subHint", "دریافت اشتراک فقط در برنامهٔ نصب‌شده کار می‌کند.", "bad"); return; }
+  say("subHint", "در حال دریافت اشتراک…", "good");
+  try{
+    const text = await window.__TAURI__.core.invoke("fetch_sub", { url: s.u });
+    const links = parseSubText(text);
+    if(!links.length){
+      say("subHint", "از این اشتراک کانفیگی دریافت نشد — لینک معتبر نیست.", "bad");
+      return;
+    }
+    // سرورهای قبلی این اشتراک حذف و سرورهای تازه جایگزین می‌شوند
+    for(let i = SERVERS.length - 1; i >= 0; i--){
+      if(SERVERS[i].sub === id) SERVERS.splice(i, 1);
+    }
+    reindexServers();
+    let added = 0;
+    links.forEach(l => {
+      const p = parseConfig(l);
+      if(!p) return;
+      p.sub = id;
+      p.ms = null;   // پینگ واقعی با «تست همه» گرفته می‌شود
+      p.i = SERVERS.length;
+      SERVERS.push(p);
+      added++;
+    });
+    s.when = "همین حالا";
+    say("subHint", `اشتراک بروزرسانی شد — ${toFa(added)} کانفیگ دریافت شد.`, "good");
+    drawSubs(); fillSubSelect(); draw("dash"); draw("all");
+  }catch(e){
+    say("subHint", "خطا در دریافت اشتراک: " + String(e), "bad");
+  }
+}
+
+function delSub(id){
+  const s = subOf(id);
+  if(!s) return;
+  let sure = false;
+  try{ sure = confirm(`اشتراک «${s.n}» و سرورهایش حذف شود؟`); }catch(e){ sure = true; }
+  if(!sure) return;
+  SUBS.splice(SUBS.indexOf(s), 1);
+  for(let i = SERVERS.length - 1; i >= 0; i--){
+    if(SERVERS[i].sub === id) SERVERS.splice(i, 1);
+  }
+  reindexServers();
+  if(activeSub === id) activeSub = "manual";
+  if(activeSrv >= SERVERS.length) activeSrv = SERVERS.length ? SERVERS.length - 1 : 0;
+  drawSubs(); fillSubSelect();
+  document.getElementById("allSub").value = activeSub;
+  draw("dash"); draw("all"); updateLive();
+  say("subHint", "اشتراک حذف شد.", "good");
+}
 
 /* فهرست اشتراک در سربرگ سرورها */
 function fillSubSelect(){
@@ -1106,7 +1176,7 @@ async function pasteSub(){
     document.getElementById("subUrl").focus();
   }
 }
-function addSub(){
+async function addSub(){
   const el = document.getElementById("subUrl");
   const v  = el.value.trim();
   if(!v){ say("subHint","لینک اشتراک را وارد کنید.","bad"); return; }
@@ -1115,13 +1185,16 @@ function addSub(){
     say("subHint","این لینک اشتراک Clash است و پشتیبانی نمی‌شود. فقط اشتراک v2ray بپذیرید.","bad");
     return;
   }
+  const id = "s" + Date.now();
+  let name = "اشتراک تازه";
+  try{ name = new URL(v).hostname; }catch(e){}
   SUBS.splice(SUBS.length - 1, 0, {
-    id: "s" + Date.now(), n: "اشتراک تازه", u: v,
+    id, n: name, u: v,
     usedB: 0, totalB: 0, when: "همین حالا", live: true
   });
   el.value = "";
-  say("subHint","اشتراک افزوده شد. برای دریافت سرورها روی «بروزرسانی» بزنید.","good");
-  drawSubs(); fillSubSelect(); draw("all");
+  drawSubs(); fillSubSelect();
+  await updateSub(id);   // بلافاصله سرورهایش را می‌گیرد
 }
 
 /* ================= افزودن کانفیگ تکی ================= */
@@ -1230,12 +1303,75 @@ function tick(){
 if(inTauri){
   setInterval(pollStats, 1000);
   setInterval(updateLive, 1000);
+  pollLog();
+  setInterval(pollLog, 1500);
 }else{
   tick(); setInterval(tick, 1200);
 }
 
+/* ================= گزارش زنده (لاگ واقعی هسته) ================= */
+let logLines = [];
+const logBox = document.getElementById("logBox");
+const logFilterEl = document.getElementById("logFilter");
+
+function renderLog(){
+  if(!logBox) return;
+  const q = (logFilterEl ? logFilterEl.value : "").trim().toLowerCase();
+  const lines = q ? logLines.filter(l => l.toLowerCase().includes(q)) : logLines;
+  const html = lines.slice(-400).map(l => {
+    const low = l.toLowerCase();
+    let cls = "";
+    if(low.includes("error") || low.includes("failed") || low.includes("panic") || low.includes("fatal")) cls = "s";
+    else if(low.includes("warn")) cls = "u";
+    else if(low.includes("info") || low.includes("started") || low.includes("listen") || low.includes("accept")) cls = "b";
+    const body = esc(l);
+    return cls ? `<div><${cls}>${body}</${cls}></div>` : `<div>${body}</div>`;
+  }).join("");
+  logBox.innerHTML = html || `<div class="empty">${q ? "نتیجه‌ای برای فیلتر نیست." : "لاگ خالی است."}</div>`;
+  logBox.scrollTop = logBox.scrollHeight;
+}
+
+async function pollLog(){
+  if(!inTauri) return;
+  try{
+    const r = await window.__TAURI__.core.invoke("read_core_log");
+    if(r && Array.isArray(r.lines) && r.lines.length){
+      logLines.push(...r.lines);
+      if(logLines.length > 2000) logLines.splice(0, logLines.length - 2000);
+      renderLog();
+    }
+  }catch(e){}
+  const st = document.getElementById("logStatus");
+  if(st) st.textContent = isConnected ? "هسته در حال اجرا" : "متوقف";
+}
+
+async function clearLog(){
+  logLines = [];
+  renderLog();
+  if(inTauri){
+    try{ await window.__TAURI__.core.invoke("core_log_clear"); }catch(e){}
+  }
+}
+
+async function saveLog(){
+  if(!inTauri){
+    logLines.push("» ذخیرهٔ فایل فقط در برنامهٔ نصب‌شده کار می‌کند.");
+    renderLog();
+    return;
+  }
+  try{
+    const path = await window.__TAURI__.core.invoke("save_core_log");
+    logLines.push("» نسخهٔ ذخیره‌شده: " + path);
+  }catch(e){
+    logLines.push("» خطا در ذخیره: " + String(e));
+  }
+  renderLog();
+}
+
+if(logFilterEl) logFilterEl.addEventListener("input", renderLog);
+
 /* ---------- شروع ---------- */
-pickServer(0);
+if(SERVERS.length) pickServer(0);
 
 /* ---------- قوانین ---------- */
 const RULES = [
@@ -1288,6 +1424,27 @@ function toggleLan(el){
   const on = el.classList.contains("on");
   document.getElementById("lanRow").style.display  = on ? "flex" : "none";
   document.getElementById("lanAuth").style.display = on ? "flex" : "none";
+}
+
+async function toggleTunSetting(el){
+  el.classList.toggle("on");
+  const on = el.classList.contains("on");
+  if(!on){
+    if(isConnected && curMode === 1) await disconnectNow();
+    return;
+  }
+  const s = SERVERS[activeSrv];
+  if(!s || !s.raw){
+    say("cfgHint", "اول یک کانفیگ اضافه کن و از لیست انتخابش کن، بعد TUN را روشن کن.", "bad");
+    el.classList.remove("on");
+    return;
+  }
+  curMode = 1;
+  document.querySelectorAll("#p-dash .sg[data-mode]").forEach(x => x.classList.toggle("on", Number(x.dataset.mode) === 1));
+  const md = document.getElementById("mdesc");
+  if(md) md.textContent = "پوشش کل ترافیک ویندوز — نیازمند اجرا به عنوان مدیر.";
+  if(isConnected) await disconnectNow();
+  await connectNow();
 }
 
 /* ---------- فونت ---------- */
@@ -1347,6 +1504,22 @@ document.querySelectorAll("#p-route .sg").forEach(sg=>{
     });
   });
 
+  /* ---------- رویدادهای هسته (اتصال خودکار TUN از نمونهٔ مدیر) ---------- */
+  if(inTauri && window.__TAURI__.event){
+    window.__TAURI__.event.listen("core_connected", () => {
+      curMode = 1;
+      document.querySelectorAll("#p-dash .sg[data-mode]").forEach(x => x.classList.toggle("on", Number(x.dataset.mode) === 1));
+      const md = document.getElementById("mdesc");
+      if(md) md.textContent = "پوشش کل ترافیک ویندوز — نیازمند اجرا به عنوان مدیر.";
+      isConnected = true; updateBtn(); connStarted = Date.now();
+      refreshIps();
+      say("cfgHint", "اتصال TUN برقرار شد.", "good");
+    });
+    window.__TAURI__.event.listen("core_error", e => {
+      say("cfgHint", "خطا در اتصال خودکار TUN: " + String((e && e.payload) || ""), "bad");
+    });
+  }
+
   /* ---------- اتصال به موتور ---------- */
 
 async function connectNow(){
@@ -1397,7 +1570,13 @@ function fmtDur(sec){
 
 function updateLive(){
   const s = SERVERS[activeSrv];
-  if(!s) return;
+  if(!s){
+    const nm = document.getElementById("liveName");
+    if(nm) nm.textContent = "—";
+    const mt = document.getElementById("liveMeta");
+    if(mt) mt.textContent = "سروری انتخاب نشده است";
+    return;
+  }
   document.getElementById("liveName").textContent = s.name;
   const lamp = document.getElementById("liveLamp");
   const c = isConnected ? "teal" : msCls(s.ms);
