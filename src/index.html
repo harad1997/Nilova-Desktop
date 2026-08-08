@@ -382,6 +382,60 @@ select:focus,input.tin:focus{outline:none;border-color:var(--accent-edge)}
   gap:20px;padding:0 18px;font-size:11px;color:var(--muted);flex-shrink:0;
 }
 .foot .ok{color:var(--teal)}
+/* ================= منوی راست‌کلیک کارت سرور ================= */
+.ctx-menu{
+  position:fixed;
+  z-index:9999;
+  min-width:180px;
+  background:var(--panel-2);
+  border:1px solid var(--line);
+  border-radius:10px;
+  padding:6px;
+  box-shadow:var(--shadow);
+  display:none;
+  font-size:13px;
+}
+
+.ctx-menu.show{
+  display:block;
+}
+
+.ctx-item{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  width:100%;
+  padding:8px 10px;
+  border:0;
+  background:none;
+  color:var(--ink);
+  border-radius:7px;
+  cursor:pointer;
+  text-align:right;
+  font-family:inherit;
+  font-size:13px;
+}
+
+.ctx-item:hover{
+  background:var(--accent-soft);
+  color:var(--accent);
+}
+
+.ctx-sep{
+  height:1px;
+  background:var(--line);
+  margin:5px 8px;
+}
+
+.ctx-danger{
+  color:var(--red);
+}
+
+.ctx-danger:hover{
+  background:color-mix(in srgb, var(--red) 15%, transparent);
+  color:var(--red);
+}
+
 </style>
 </head>
 <body>
@@ -811,6 +865,171 @@ select:focus,input.tin:focus{outline:none;border-color:var(--accent-edge)}
 
 /* ============ حالت واقعی (داخل برنامه) یا نمایشی (پیش‌نمایش) ============ */
 const inTauri = !!(window.__TAURI__ && window.__TAURI__.core);
+/* ================= منوی راست‌کلیک کارت سرور ================= */
+(function(){
+  const menu = document.createElement("div");
+
+  menu.className = "ctx-menu";
+  menu.innerHTML = `
+    <button class="ctx-item" data-act="copy">📋 کپی لینک</button>
+    <button class="ctx-item" data-act="ping">📶 تست پینگ</button>
+    <div class="ctx-sep"></div>
+    <button class="ctx-item ctx-danger" data-act="del">🗑 حذف</button>
+  `;
+
+  document.body.appendChild(menu);
+
+  let targetIdx = -1;
+
+  function hideMenu(){
+    menu.classList.remove("show");
+    targetIdx = -1;
+  }
+
+  function showMenu(x, y, idx){
+    targetIdx = idx;
+
+    menu.classList.add("show");
+    menu.style.left = "0px";
+    menu.style.top = "0px";
+
+    const mw = menu.offsetWidth;
+    const mh = menu.offsetHeight;
+
+    menu.style.left =
+      Math.min(x, window.innerWidth - mw - 6) + "px";
+
+    menu.style.top =
+      Math.min(y, window.innerHeight - mh - 6) + "px";
+  }
+
+  window.addEventListener("click", e => {
+    if(!menu.contains(e.target)) hideMenu();
+  });
+
+  window.addEventListener("blur", hideMenu);
+
+  document.addEventListener("keydown", e => {
+    if(e.key === "Escape") hideMenu();
+  });
+
+  window.addEventListener("scroll", hideMenu, true);
+
+  /* راست‌کلیک روی کارت سرور */
+  window.addEventListener("contextmenu", e => {
+    const card = e.target.closest(".tile[data-i], .row[data-i]");
+
+    if(card){
+  const idx = Number(card.dataset.i);
+
+  if(SERVERS[idx] && SERVERS[idx].sub === "manual"){
+    e.preventDefault();
+    showMenu(e.clientX, e.clientY, idx);
+    return;
+  }
+}
+
+    /* جلوگیری از منوی پیش‌فرض در سایر قسمت‌ها،
+       اما اجازه‌دادن به راست‌کلیک داخل فیلدهای متنی */
+    const t = e.target;
+    const isField =
+      t &&
+      (
+        t.tagName === "INPUT" ||
+        t.tagName === "TEXTAREA" ||
+        t.isContentEditable
+      );
+
+    if(!isField) e.preventDefault();
+  });
+
+  menu.addEventListener("click", async e => {
+    const button = e.target.closest(".ctx-item");
+    if(!button) return;
+
+    const action = button.dataset.act;
+    const idx = targetIdx;
+    const server = SERVERS[idx];
+
+    hideMenu();
+
+    if(!server) return;
+
+    /* کپی لینک */
+    if(action === "copy"){
+      if(!server.raw){
+        alert("لینک این سرور موجود نیست.");
+        return;
+      }
+
+      const ok = await copyText(server.raw);
+      alert(ok ? "لینک کپی شد." : "کپی لینک ناموفق بود.");
+      return;
+    }
+
+    /* تست پینگ */
+    if(action === "ping"){
+      if(!inTauri){
+        alert("تست پینگ فقط در نسخهٔ نصب‌شدهٔ برنامه کار می‌کند.");
+        return;
+      }
+
+      if(!server.raw){
+        alert("لینک این سرور موجود نیست.");
+        return;
+      }
+
+      server.ms = null;
+      server.err = null;
+      draw("dash");
+      draw("all");
+
+      try{
+        const result =
+          await window.__TAURI__.core.invoke(
+            "test_one",
+            { link: server.raw }
+          );
+
+        server.ms = result.ok ? result.ms : null;
+        server.err = result.ok
+          ? null
+          : (result.err || "تست ناموفق بود.");
+      }catch(err){
+        server.ms = null;
+        server.err = String(err);
+      }
+
+      draw("dash");
+      draw("all");
+      updateLive();
+      return;
+    }
+
+    /* حذف سرور */
+    if(action === "del"){
+      const title = server.name || server.host || "این سرور";
+
+      if(!confirm(`«${title}» حذف شود؟`)) return;
+
+      SERVERS.splice(idx, 1);
+      reindexServers();
+
+      if(activeSrv >= SERVERS.length){
+        activeSrv = SERVERS.lengthس
+          ? SERVERS.length - 1
+          : 0;
+      }
+
+      draw("dash");
+      draw("all");
+      drawSubs();
+      updateLive();
+      saveUserData();
+    }
+  });
+})();
+
 let isConnected = false;
 let connStarted = 0;
 const sparkDn = [], sparkUp = [];
@@ -1630,7 +1849,9 @@ async function connectNow(){
     connectedSrv = activeSrv;
     updateBtn();
     connStarted = Date.now();
-    refreshIps();
+        document.getElementById("ipProxyCc").textContent = "?";
+    document.getElementById("ipProxyV").textContent = "در حال بررسی…";
+    setTimeout(refreshIps, 2000);
     say("cfgHint", result, "good");
   }catch(e){
     isConnected = false;
@@ -1738,22 +1959,26 @@ async function pollStats(){
 
 async function refreshIps(){
   if(!inTauri || !isConnected) return;
-  try{
-    const r = await window.__TAURI__.core.invoke("get_ips", { mode: curMode });
-    const p = r.proxy || {}, d = r.direct || {};
-    if(p.ip){
-      document.getElementById("ipProxyCc").textContent = p.cc || "?";
-      document.getElementById("ipProxyV").innerHTML = `${p.ip}${p.city ? ` <em>${p.city}</em>` : ""}`;
-    }
-    if(d.ip){
-      document.getElementById("ipRealCc").textContent = d.cc || "?";
-      const parts = d.ip.split(".");
-      const masked = parts.length === 4
-        ? parts[0] + "." + parts[1] + ".•••.•••"
-        : "•••.•••.•••.•••";
-      document.getElementById("ipRealV").textContent = masked;
-    }
-  }catch(e){}
+  for(let attempt = 0; attempt < 3; attempt++){
+    try{
+      const r = await window.__TAURI__.core.invoke("get_ips", { mode: curMode });
+      const p = r.proxy || {}, d = r.direct || {};
+      if(p.ip){
+        document.getElementById("ipProxyCc").textContent = p.cc || "?";
+        document.getElementById("ipProxyV").innerHTML = `${p.ip}${p.city ? ` <em>${p.city}</em>` : ""}`;
+      }
+      if(d.ip){
+        document.getElementById("ipRealCc").textContent = d.cc || "?";
+        const parts = d.ip.split(".");
+        const masked = parts.length === 4
+          ? parts[0] + "." + parts[1] + ".•••.•••"
+          : "•••.•••.•••.•••";
+        document.getElementById("ipRealV").textContent = masked;
+      }
+      if(p.ip && d.ip) return;
+    }catch(e){}
+    await new Promise(res => setTimeout(res, 1500));
+  }
 }
 
 let testStop = false;
@@ -1804,10 +2029,7 @@ function updateBtn(){
   const btn = document.getElementById("toggleBtn");
 
   if(btn){
-    btn.textContent =
-      (isConnected && connectedSrv === activeSrv)
-        ? "قطع اتصال"
-        : "اتصال";
+    btn.textContent = isConnected ? "قطع اتصال" : "اتصال";
   }
 }
 
