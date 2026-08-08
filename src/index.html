@@ -127,6 +127,7 @@ body{
 .grid{display:grid;gap:11px;margin-bottom:11px;flex-shrink:0}
 .g-hero{grid-template-columns:1fr 1.4fr}
 .g-quad{grid-template-columns:.78fr 1.2fr 1.02fr 1.05fr}
+.g-triple{grid-template-columns:.85fr 0.95fr 1.3fr}
 .g-half{grid-template-columns:1fr 1fr}
 
 /* ---- کارت سرور فعال ---- */
@@ -479,8 +480,8 @@ select:focus,input.tin:focus{outline:none;border-color:var(--accent-edge)}
         </div>
       </div>
 
-      <!-- ردیف دوم: حالت اتصال · نشانی اینترنتی · تست سرعت · ترافیک مصرفی -->
-      <div class="grid g-quad">
+      <!-- ردیف دوم: حالت اتصال · نشانی اینترنتی · ترافیک مصرفی -->
+      <div class="grid g-triple">
         <div class="card">
           <h2>حالت اتصال</h2>
           <div class="seg">
@@ -511,15 +512,6 @@ select:focus,input.tin:focus{outline:none;border-color:var(--accent-edge)}
         </div>
 
         <div class="card">
-          <h2>تست سرعت <span class="pill">fast.com</span></h2>
-          <div class="sp"><span class="n" id="stNum">—</span><span class="u">Mbps دانلود</span></div>
-          <div class="track"><i></i></div>
-          <div class="kv"><span>آپلود</span><b id="stUp">—</b></div>
-          <div class="kv"><span>پینگ</span><b id="stPing">—</b></div>
-          <button class="btn g sm sp-btn" id="stBtn" onclick="runSpeedTest()">تست دوباره</button>
-        </div>
-
-        <div class="card">
           <h2>ترافیک مصرفی <span class="pill">امروز</span></h2>
           <div class="use">
             <div class="dn"><div class="k">دانلود</div><div class="v" id="usDown">—</div></div>
@@ -538,7 +530,13 @@ select:focus,input.tin:focus{outline:none;border-color:var(--accent-edge)}
           <h2>سرورها</h2>
           <span class="c" id="dashSubName">—</span>
           <input class="search" id="dashSearch" placeholder="جستجو…">
-          <button class="btn g sm" onclick="testAll()">تست همه</button>
+        <select class="btn g sm testsel" onchange="testAction(this)">
+  <option value="" disabled selected hidden>تست همه</option>
+  <option value="test">تست همه</option>
+  <option value="stop">توقف تست</option>
+  <option value="clear">پاک کردن نتایج</option>
+</select>
+
           <div class="gear" id="dashGear" title="تنظیم نمایش">
             <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M18.4 5.6l-1.8 1.8M7.4 16.6l-1.8 1.8"/></svg>
           </div>
@@ -565,7 +563,12 @@ select:focus,input.tin:focus{outline:none;border-color:var(--accent-edge)}
           <h2>همهٔ سرورها</h2>
           <span class="c" id="allCount">—</span>
           <select id="allSub" style="min-width:170px;margin-right:auto"></select>
-          <button class="btn g sm" onclick="testAll()">تست همه</button>
+          <select class="btn g sm testsel" onchange="testAction(this)">
+  <option value="" disabled selected hidden>تست همه</option>
+  <option value="test">تست همه</option>
+  <option value="stop">توقف تست</option>
+  <option value="clear">پاک کردن نتایج</option>
+</select>
           <div class="gear" id="allGear" title="تنظیم نمایش">
             <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M18.4 5.6l-1.8 1.8M7.4 16.6l-1.8 1.8"/></svg>
           </div>
@@ -841,12 +844,13 @@ const subOf = id => SUBS.find(s => s.id === id);
 const countOf = id => SERVERS.filter(s => s.sub === id).length;
 /* رنگ تأخیر: زیر ۱۰۰ سبز پررنگ · ۱۰۰–۲۵۰ سبز کم‌رنگ · ۲۵۰–۳۵۰ زرد · بالای ۳۵۰ قهوه‌ای · قطع قرمز کم‌رنگ */
 const msCls = m => m === null ? "p0" : m < 100 ? "p1" : m <= 250 ? "p2" : m <= 350 ? "p3" : "p4";
-const msTxt = m => m === null ? "ناموفق" : toFa(m) + " ms";
+const msTxt = m => m === null ? "" : toFa(m) + " ms";
 const esc = t => String(t ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
 const errHtml = s => s.err ? `<div class="err">${esc(s.err)}</div>` : "";
 
 let activeSub = "manual";     // اشتراک انتخاب‌شده
-let activeSrv = 0;        // سرور متصل
+let activeSrv = 0;            // سرور انتخاب‌شده
+let connectedSrv = -1;        // سرور واقعاً متصل
 
 /* ================= تنظیم نمایش ================= */
 const VOPTS = {
@@ -974,6 +978,7 @@ function draw(which){
 function pickServer(i){
   activeSrv = i;
   updateLive();
+  updateBtn();
   draw("dash"); draw("all");
 }
 
@@ -1127,8 +1132,9 @@ async function updateSub(id){
   added++;
 });
     s.when = "همین حالا";
-    say("subHint", `اشتراک بروزرسانی شد — ${toFa(added)} کانفیگ دریافت شد.`, "good");
-    drawSubs(); fillSubSelect(); draw("dash"); draw("all");
+say("subHint", `اشتراک بروزرسانی شد — ${toFa(added)} کانفیگ دریافت شد.`, "good");
+drawSubs(); fillSubSelect(); draw("dash"); draw("all");
+await saveUserData();
   }catch(e){
     say("subHint", "خطا در دریافت اشتراک: " + String(e), "bad");
   }
@@ -1151,6 +1157,8 @@ function delSub(id){
   document.getElementById("allSub").value = activeSub;
   draw("dash"); draw("all"); updateLive();
   say("subHint", "اشتراک حذف شد.", "good");
+saveUserData();
+
 }
 
 /* فهرست اشتراک در سربرگ سرورها */
@@ -1198,6 +1206,8 @@ async function addSub(){
   el.value = "";
   drawSubs(); fillSubSelect();
   await updateSub(id);   // بلافاصله سرورهایش را می‌گیرد
+   await saveUserData();
+
 }
 
 /* ================= افزودن کانفیگ تکی ================= */
@@ -1243,7 +1253,7 @@ function parseConfig(link){
   name = name.replace(/[\u{1F1E6}-\u{1F1FF}]/gu, "").trim() || `${host}`;
   return {cc: ccFrom(name, host), name, host: `${host}:${port}`,
           proto: kind === "ss" ? "trojan" : kind,
-          ms: 60 + Math.floor(Math.random() * 340), sub: "manual"};
+          ms: null, sub: "manual"};
 }
 
 function addCfg(){
@@ -1270,7 +1280,10 @@ function addCfg(){
   say("cfgHint", `${toFa(ok)} کانفیگ افزوده شد${bad ? ` · ${toFa(bad)} مورد نامعتبر بود` : ""}.`, "good");
   document.getElementById("allSub").value = "manual";
   pickServer(SERVERS.length - 1);
-  drawSubs(); draw("all"); draw("dash");
+  drawSubs();
+draw("all");
+draw("dash");
+saveUserData();
 }
 
 /* ================= شمارنده‌های سرعت و ترافیک ================= */
@@ -1456,25 +1469,88 @@ const fontSel = document.getElementById("fontSel");
 const sizeSel = document.getElementById("sizeSel");
 const weightSel = document.getElementById("weightSel");
 
-function applySettings() {
+let appliedFontScale = 1;
+
+function applyTextScale(){
+  const size = Number(sizeSel.value) || 14;
+  const newScale = size / 14;
+  const oldScale = appliedFontScale;
+
+  // حذف زوم قبلی؛ زوم باعث تغییر اندازه کادرها می‌شد
+  document.body.style.zoom = "";
+
+  const elements = [
+    document.body,
+    ...document.body.querySelectorAll("*")
+  ];
+
+  elements.forEach(el => {
+    // روی کدها و SVGها اندازه فونت اعمال نکن
+    if(el.matches("script, style, svg, path, circle, line, rect, polyline, polygon")){
+      return;
+    }
+
+    const currentSize = parseFloat(getComputedStyle(el).fontSize);
+
+    if(!Number.isFinite(currentSize)){
+      return;
+    }
+
+    // اندازه پایه هر عنصر را فقط بار اول ذخیره کن
+    if(!el.dataset.nilovaBaseFontSize){
+      el.dataset.nilovaBaseFontSize =
+        String(currentSize / oldScale);
+    }
+
+    const baseSize = Number(el.dataset.nilovaBaseFontSize);
+
+    if(Number.isFinite(baseSize)){
+      el.style.setProperty(
+        "font-size",
+        `${(baseSize * newScale).toFixed(2)}px`,
+        "important"
+      );
+    }
+  });
+
+  appliedFontScale = newScale;
+}
+
+function applySettings(){
   let styleTag = document.getElementById("force-style");
-  if (!styleTag) {
+
+  if(!styleTag){
     styleTag = document.createElement("style");
     styleTag.id = "force-style";
     document.head.appendChild(styleTag);
   }
 
-  let font = fontSel.value;
-  let weight = weightSel.value;
-  styleTag.innerHTML = "* { font-family: " + font + " !important; font-weight: " + weight + " !important; }";
+  const font = fontSel.value;
+  const weight = weightSel.value;
 
-  let size = Number(sizeSel.value);
-  document.body.style.zoom = size / 14;
+  styleTag.innerHTML =
+    "* { font-family: " + font +
+    " !important; font-weight: " + weight +
+    " !important; }";
+
+  applyTextScale();
 }
 
 fontSel.addEventListener("change", applySettings);
 sizeSel.addEventListener("change", applySettings);
 weightSel.addEventListener("change", applySettings);
+
+const fontObserver = new MutationObserver(() => {
+  applyTextScale();
+});
+
+fontObserver.observe(document.body, {
+  childList: true,
+  subtree: true
+});
+
+applySettings();
+
 
 /* ---------- حالت اتصال ---------- */
 const MODE_TXT = [
@@ -1514,7 +1590,7 @@ document.querySelectorAll("#p-route .sg").forEach(sg=>{
       document.querySelectorAll("#p-dash .sg[data-mode]").forEach(x => x.classList.toggle("on", Number(x.dataset.mode) === 1));
       const md = document.getElementById("mdesc");
       if(md) md.textContent = "پوشش کل ترافیک ویندوز — نیازمند اجرا به عنوان مدیر.";
-      isConnected = true; updateBtn(); connStarted = Date.now();
+      isConnected = true; connectedSrv = activeSrv; updateBtn(); connStarted = Date.now();
       refreshIps();
       say("cfgHint", "اتصال TUN برقرار شد.", "good");
     });
@@ -1527,21 +1603,39 @@ document.querySelectorAll("#p-route .sg").forEach(sg=>{
 
 async function connectNow(){
   const s = SERVERS[activeSrv];
+
+  // اول کانفیگ جدید را بررسی کن؛ اتصال قبلی فعلاً قطع نشود
   if(!s || !s.raw){
     say("cfgHint","اول یک کانفیگ اضافه کن و از لیست انتخابش کن.","bad");
     return;
   }
+
   if(!s.raw.startsWith("vless://")){
     say("cfgHint","فعلاً فقط کانفیگ VLESS پشتیبانی میشود.","bad");
     return;
   }
+
+  // حالا که کانفیگ جدید معتبر است، اتصال قبلی را قطع کن
+  if(isConnected){
+    await disconnectNow();
+  }
+
   try{
-    const result = await window.__TAURI__.core.invoke(curMode === 1 ? "run_tun" : "run_xray", { link: s.raw });
-    isConnected = true; updateBtn();
+    const result = await window.__TAURI__.core.invoke(
+      curMode === 1 ? "run_tun" : "run_xray",
+      { link: s.raw }
+    );
+
+    isConnected = true;
+    connectedSrv = activeSrv;
+    updateBtn();
     connStarted = Date.now();
     refreshIps();
     say("cfgHint", result, "good");
   }catch(e){
+    isConnected = false;
+    connectedSrv = -1;
+    updateBtn();
     say("cfgHint", String(e), "bad");
   }
 }
@@ -1549,8 +1643,13 @@ async function connectNow(){
 async function disconnectNow(){
   try{
     const result = await window.__TAURI__.core.invoke("stop_xray");
-    isConnected = false; updateBtn();
+
+    isConnected = false;
+    connectedSrv = -1;
+    updateBtn();
+
     connStarted = 0;
+
     document.getElementById("spDown").textContent = "—";
     document.getElementById("spUp").textContent = "—";
     document.getElementById("ipProxyV").textContent = "—";
@@ -1572,7 +1671,8 @@ function fmtDur(sec){
 }
 
 function updateLive(){
-  const s = SERVERS[activeSrv];
+  const targetSrv = isConnected ? connectedSrv : activeSrv;
+  const s = SERVERS[targetSrv];
   if(!s){
     const nm = document.getElementById("liveName");
     if(nm) nm.textContent = "—";
@@ -1611,7 +1711,7 @@ function paintSpark(){
 }
 
 async function pollStats(){
-  if(!isConnected || !inTauri) return;
+  if(!inTauri) return;
   try{
     const r = await window.__TAURI__.core.invoke("get_traffic");
     const dn = r.downSpeed || 0, up = r.upSpeed || 0;
@@ -1656,29 +1756,27 @@ async function refreshIps(){
   }catch(e){}
 }
 
-async function runSpeedTest(){
-  const btn = document.getElementById("stBtn");
-  if(!inTauri){ say("cfgHint", "تست سرعت فقط در برنامهٔ نصب‌شده کار می‌کند.", "bad"); return; }
-  if(!isConnected){ say("cfgHint", "اول یک سرور را وصل کن، بعد تست سرعت بگیر.", "bad"); return; }
-  btn.disabled = true;
-  btn.textContent = "در حال تست…";
-  try{
-    const r = await window.__TAURI__.core.invoke("speed_test", { mode: curMode });
-    document.getElementById("stNum").textContent  = toFa(r.down || 0);
-    document.getElementById("stUp").textContent   = toFa(r.up || 0) + " Mbps";
-    document.getElementById("stPing").textContent = toFa(r.ping || 0) + " ms";
-    say("cfgHint", "تست سرعت انجام شد.", "good");
-  }catch(e){
-    say("cfgHint", String(e), "bad");
-  }
-  btn.disabled = false;
-  btn.textContent = "تست دوباره";
+let testStop = false;
+
+function testAction(sel){
+  const v = sel.value;
+  sel.value = "";
+  if(v === "test") testAll();
+  else if(v === "stop") testStop = true;
+  else if(v === "clear") clearResults();
+}
+
+function clearResults(){
+  testStop = true;
+  SERVERS.forEach(s => { s.ms = null; s.err = null; });
+  draw("dash"); draw("all");
+  updateLive();
 }
 
 async function testAll(){
-  const btns = document.querySelectorAll("button[onclick='testAll()']");
-  btns.forEach(b => { b.disabled = true; b.textContent = "در حال تست…"; });
+  testStop = false;
   for(const s of SERVERS){
+    if(testStop) break;
     if(!s.raw) continue;
     try{
       const r = await window.__TAURI__.core.invoke("test_one", { link: s.raw });
@@ -1690,19 +1788,115 @@ async function testAll(){
     }
     draw("dash"); draw("all");
   }
-  btns.forEach(b => { b.disabled = false; b.textContent = "تست همه"; });
+  document.querySelectorAll(".testsel").forEach(sel => sel.value = "");
   updateLive();
 }
 
 async function toggleConnect(){
-  if(isConnected) await disconnectNow();
-  else await connectNow();
+  if(isConnected && connectedSrv === activeSrv){
+    await disconnectNow();
+  }else{
+    await connectNow();
+  }
 }
 
 function updateBtn(){
   const btn = document.getElementById("toggleBtn");
-  if(btn) btn.textContent = isConnected ? "قطع اتصال" : "اتصال";
+
+  if(btn){
+    btn.textContent =
+      (isConnected && connectedSrv === activeSrv)
+        ? "قطع اتصال"
+        : "اتصال";
+  }
 }
+
+async function saveUserData(){
+  if(!inTauri) return;
+
+  const manual = SERVERS
+    .filter(s => s.sub === "manual" && s.raw)
+    .map(s => s.raw);
+
+  const subs = SUBS
+    .filter(s => !s.manual)
+    .map(s => ({
+      id: s.id,
+      n: s.n,
+      u: s.u,
+      when: s.when || "",
+      live: s.live !== false
+    }));
+
+  const data = JSON.stringify({
+    manual,
+    subs
+  });
+
+  try{
+    await window.__TAURI__.core.invoke("save_user_data", { data });
+  }catch(e){
+    console.error("خطا در ذخیرهٔ اطلاعات:", e);
+  }
+}
+
+async function loadUserData(){
+  if(!inTauri) return;
+
+  try{
+    const text = await window.__TAURI__.core.invoke("load_user_data");
+    const data = JSON.parse(text || "{}");
+
+    // بارگذاری کانفیگ‌های دستی
+    if(Array.isArray(data.manual)){
+      for(const raw of data.manual){
+        const p = parseConfig(raw);
+
+        if(!p) continue;
+
+        p.i = SERVERS.length;
+        p.raw = raw;
+        p.sub = "manual";
+        p.ms = null;
+
+        SERVERS.push(p);
+      }
+    }
+
+    // بارگذاری اشتراک‌ها
+    if(Array.isArray(data.subs)){
+      for(const saved of data.subs){
+        if(!saved.id || !saved.u) continue;
+
+        SUBS.splice(SUBS.length - 1, 0, {
+          id: saved.id,
+          n: saved.n || "اشتراک ذخیره‌شده",
+          u: saved.u,
+          usedB: 0,
+          totalB: 0,
+          when: saved.when || "ذخیره‌شده",
+          live: saved.live !== false
+        });
+
+        // دریافت دوبارهٔ کانفیگ‌های این اشتراک
+        await updateSub(saved.id);
+      }
+    }
+
+    reindexServers();
+    drawSubs();
+    fillSubSelect();
+    draw("dash");
+    draw("all");
+    updateLive();
+
+  }catch(e){
+    console.log("اطلاعات قبلی پیدا نشد.");
+  }
+}
+
+loadUserData();
+
 </script>
 </body>
 </html>
