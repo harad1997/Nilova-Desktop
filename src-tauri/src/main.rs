@@ -504,9 +504,13 @@ fn child_error(mut child: Child, log_path: &Path) -> String {
 
 fn start_core(link: &str, tun: bool, state: State<'_, AppState>, with_proxy: bool) -> Result<(), String> {
     // پورت‌های آزاد برای هر اتصال — تداخل با برنامه‌های دیگر غیرممکن می‌شود
-    let http = free_port()?;
-    let socks = free_port()?;
-    let metrics = free_port()?;
+    let l_http = TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
+    let l_socks = TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
+    let l_metrics = TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
+    let http = l_http.local_addr().map_err(|e| e.to_string())?.port();
+    let socks = l_socks.local_addr().map_err(|e| e.to_string())?.port();
+    let metrics = l_metrics.local_addr().map_err(|e| e.to_string())?.port();
+    drop(l_http); drop(l_socks); drop(l_metrics);
     let ports = CorePorts { http, socks, metrics };
 
     let config_json = if tun {
@@ -644,7 +648,7 @@ fn run_test_one(link: &str) -> Result<serde_json::Value, String> {
     };
 
     // صبر کن تا پورت محلی بالا بیاید؛ اگر هسته از کار افتاد دلیلش را بگو
-    if !wait_port(port, Duration::from_secs(6)) {
+        if !wait_port(port, Duration::from_secs(3)) {
         let reason = child_error(child, &tmp_log);
         let _ = fs::remove_file(&tmp);
         let _ = fs::remove_file(&tmp_log);
@@ -655,7 +659,7 @@ fn run_test_one(link: &str) -> Result<serde_json::Value, String> {
     let proxy = format!("http://127.0.0.1:{}", port);
     let mut best: Option<f64> = None;
     for _ in 0..3 {
-        if let Ok(ms) = rtt_ms(Some(&proxy), 4) {
+        if let Ok(ms) = rtt_ms(Some(&proxy), 2) {
             best = Some(match best {
                 Some(b) => b.min(ms),
                 None => ms,
@@ -765,6 +769,41 @@ fn stats_file() -> PathBuf {
     match std::env::var("APPDATA") {
         Ok(a) => PathBuf::from(a).join("Nilova").join("stats.json"),
         Err(_) => PathBuf::from("nilova_stats.json"),
+    }
+}
+
+fn configs_file() -> PathBuf {
+    match std::env::var("APPDATA") {
+        Ok(a) => PathBuf::from(a)
+            .join("Nilova")
+            .join("configs.json"),
+        Err(_) => PathBuf::from("nilova_configs.json"),
+    }
+}
+
+#[tauri::command]
+fn save_user_data(data: String) -> Result<(), String> {
+    let path = configs_file();
+
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir)
+            .map_err(|e| format!("خطا در ساخت پوشهٔ تنظیمات: {}", e))?;
+    }
+
+    fs::write(&path, data)
+        .map_err(|e| format!("خطا در ذخیرهٔ تنظیمات: {}", e))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+fn load_user_data() -> Result<String, String> {
+    match fs::read_to_string(configs_file()) {
+        Ok(text) => Ok(text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            Ok("{}".to_string())
+        }
+        Err(e) => Err(format!("خطا در خواندن تنظیمات: {}", e)),
     }
 }
 
@@ -931,7 +970,7 @@ fn run_speedtest(mode: u32, proxy: Option<&str>) -> Result<serde_json::Value, St
 /* ================= دستورات Tauri ================= */
 
 #[tauri::command]
-fn run_xray(link: String, state: State<'_, AppState>) -> Result<String, String> {
+async fn run_xray(link: String, state: State<'_, AppState>) -> Result<String, String> {
     start_core(&link, false, state, true)?;
     Ok("اتصال برقرار شد؛ پروکسی سیستم ویندوز روشن شد".into())
 }
@@ -977,7 +1016,7 @@ fn relaunch_elevated(_link: &str) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn run_tun(link: String, state: State<'_, AppState>, app: tauri::AppHandle) -> Result<String, String> {
+async fn run_tun(link: String, state: State<'_, AppState>, app: tauri::AppHandle) -> Result<String, String> {
     if !is_admin() {
         // اجرای مجدد با دسترسی مدیر — پنجرهٔ UAC از ویندوز خواسته می‌شود
         relaunch_elevated(&link)?;
@@ -1256,6 +1295,8 @@ fn main() {
             get_ips,
             speed_test,
             fetch_sub,
+            save_user_data,
+            load_user_data,
             read_core_log,
             core_log_clear,
             save_core_log,
