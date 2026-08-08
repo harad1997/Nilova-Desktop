@@ -436,6 +436,65 @@ select:focus,input.tin:focus{outline:none;border-color:var(--accent-edge)}
   color:var(--red);
 }
 
+/* ================= کادر تأیید اختصاصی ================= */
+.modal-ov{
+  position:fixed;
+  inset:0;
+  z-index:10000;
+  background:rgba(0,0,0,.5);
+  display:none;
+  align-items:center;
+  justify-content:center;
+}
+
+.modal-ov.show{
+  display:flex;
+}
+
+.modal-box{
+  min-width:280px;
+  max-width:420px;
+  background:var(--panel-2);
+  border:1px solid var(--line);
+  border-radius:14px;
+  padding:18px 20px;
+  box-shadow:var(--shadow);
+}
+
+.modal-box .m-title{
+  font-size:14px;
+  font-weight:600;
+  color:var(--ink);
+  margin-bottom:14px;
+}
+
+.modal-box .m-actions{
+  display:flex;
+  gap:8px;
+  justify-content:flex-end;
+}
+
+.modal-box button{
+  padding:7px 18px;
+  border-radius:8px;
+  border:1px solid var(--line);
+  background:var(--panel);
+  color:var(--ink);
+  cursor:pointer;
+  font-family:inherit;
+  font-size:13px;
+}
+
+.modal-box button.m-ok{
+  background:var(--red);
+  color:#fff;
+  border-color:transparent;
+}
+
+.modal-box button:hover{
+  background:var(--panel-2);
+}
+
 </style>
 </head>
 <body>
@@ -865,6 +924,49 @@ select:focus,input.tin:focus{outline:none;border-color:var(--accent-edge)}
 
 /* ============ حالت واقعی (داخل برنامه) یا نمایشی (پیش‌نمایش) ============ */
 const inTauri = !!(window.__TAURI__ && window.__TAURI__.core);
+/* تابع کادر تأیید اختصاصی */
+const askConfirm = (message) => new Promise(resolve => {
+  const ov = document.createElement("div");
+
+  ov.className = "modal-ov show";
+
+  ov.innerHTML = `
+    <div class="modal-box">
+      <div class="m-title">${message}</div>
+      <div class="m-actions">
+        <button class="m-cancel">انصراف</button>
+        <button class="m-ok">حذف</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(ov);
+
+  const done = value => {
+    ov.remove();
+    resolve(value);
+  };
+
+  ov.querySelector(".m-ok")
+    .addEventListener("click", () => done(true));
+
+  ov.querySelector(".m-cancel")
+    .addEventListener("click", () => done(false));
+
+  ov.addEventListener("click", e => {
+    if(e.target === ov) done(false);
+  });
+
+  const onKey = e => {
+    if(e.key === "Escape"){
+      done(false);
+      document.removeEventListener("keydown", onKey);
+    }
+  };
+
+  document.addEventListener("keydown", onKey);
+});
+
 /* ================= منوی راست‌کلیک کارت سرور ================= */
 (function(){
   const menu = document.createElement("div");
@@ -1010,13 +1112,13 @@ const inTauri = !!(window.__TAURI__ && window.__TAURI__.core);
     if(action === "del"){
       const title = server.name || server.host || "این سرور";
 
-      if(!confirm(`«${title}» حذف شود؟`)) return;
+      if(!(await askConfirm(`«${title}» حذف شود؟`))) return;
 
       SERVERS.splice(idx, 1);
       reindexServers();
 
       if(activeSrv >= SERVERS.length){
-        activeSrv = SERVERS.lengthس
+        activeSrv = SERVERS.length
           ? SERVERS.length - 1
           : 0;
       }
@@ -1118,6 +1220,7 @@ function wireVset(which){
     const btn = e.target.closest(".opt");
     if(!btn) return;
     CTX[which].cfg[btn.dataset.k] = btn.dataset.v;
+      saveUserData();
     box.innerHTML = vsetHtml(which);
     draw(which);
   });
@@ -1205,9 +1308,15 @@ function pickServer(i){
   wireVset(w);
   if(CTX[w].search)
     document.getElementById(CTX[w].search).addEventListener("input", () => draw(w));
-  document.getElementById(CTX[w].rows).addEventListener("click", e => {
+   document.getElementById(CTX[w].rows).addEventListener("click", e => {
     const el = e.target.closest("[data-i]");
-    if(el) pickServer(+el.dataset.i);
+    if(!el) return;
+    const i = +el.dataset.i;
+    pickServer(i);
+    // اگر در حال اتصال هستیم و کانفیگ دیگری کلیک شد، خودکار قطع و وصل کن
+    if(isConnected && connectedSrv !== i){
+      connectNow();
+    }
   });
 });
 
@@ -1834,6 +1943,10 @@ async function connectNow(){
     return;
   }
 
+  // بازخورد فوری هنگام سوییچ خودکار
+  const btn = document.getElementById("toggleBtn");
+  if(btn) btn.textContent = "در حال اتصال…";
+
   // حالا که کانفیگ جدید معتبر است، اتصال قبلی را قطع کن
   if(isConnected){
     await disconnectNow();
@@ -1849,7 +1962,8 @@ async function connectNow(){
     connectedSrv = activeSrv;
     updateBtn();
     connStarted = Date.now();
-        document.getElementById("ipProxyCc").textContent = "?";
+    updateLive();
+    document.getElementById("ipProxyCc").textContent = "?";
     document.getElementById("ipProxyV").textContent = "در حال بررسی…";
     setTimeout(refreshIps, 2000);
     say("cfgHint", result, "good");
@@ -2051,9 +2165,13 @@ async function saveUserData(){
     }));
 
   const data = JSON.stringify({
-    manual,
-    subs
-  });
+     manual,
+     subs,
+     views: {
+      dash: CTX.dash.cfg,
+      all: CTX.all.cfg
+  }
+});
 
   try{
     await window.__TAURI__.core.invoke("save_user_data", { data });
@@ -2068,6 +2186,15 @@ async function loadUserData(){
   try{
     const text = await window.__TAURI__.core.invoke("load_user_data");
     const data = JSON.parse(text || "{}");
+      if(data.views){
+       if(data.views.dash) CTX.dash.cfg = data.views.dash;
+       if(data.views.all)  CTX.all.cfg = data.views.all;
+}
+
+
+document.getElementById(CTX.dash.vset).innerHTML = vsetHtml("dash");
+document.getElementById(CTX.all.vset).innerHTML = vsetHtml("all");
+
 
     // بارگذاری کانفیگ‌های دستی
     if(Array.isArray(data.manual)){
