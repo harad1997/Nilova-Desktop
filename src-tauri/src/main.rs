@@ -501,25 +501,6 @@ fn child_error(mut child: Child, log_path: &Path) -> String {
     }
     reason
 }
-/// اگر هسته در حالت TUN خطای ساخت آداپتور داده باشد، همان خط را از لاگ برمی‌گرداند.
-fn tun_log_error() -> Option<String> {
-    let text = fs::read_to_string(core_log_path()).ok()?;
-    let markers = [
-        "failed to find matching adapter",
-        "element not found",
-        "failed to create server",
-        "failed to create adapter",
-        "initialization has already been completed",
-        "wintun",
-    ];
-    for line in text.lines() {
-        let low = line.to_lowercase();
-        if markers.iter().any(|m| low.contains(m)) {
-            return Some(line.trim().to_string());
-        }
-    }
-    None
-}
 
 fn start_core(link: &str, tun: bool, state: State<'_, AppState>, with_proxy: bool) -> Result<(), String> {
     // پورت‌های آزاد برای هر اتصال — تداخل با برنامه‌های دیگر غیرممکن می‌شود
@@ -565,7 +546,7 @@ fn start_core(link: &str, tun: bool, state: State<'_, AppState>, with_proxy: boo
     let mut child = spawn_xray(&config_path, &log_path)?;
 
     // صبر کن تا هسته واقعاً بالا بیاید (پورت سرویس آمار)
-    if !wait_port(metrics, Duration::from_secs(8)) {
+      if !wait_port(metrics, Duration::from_secs(8)) {
         let reason = child_error(child, &log_path);
         return Err(format!("خطا در شروع اتصال: {}", reason));
     }
@@ -574,23 +555,17 @@ fn start_core(link: &str, tun: bool, state: State<'_, AppState>, with_proxy: boo
         let reason = child_error(child, &log_path);
         return Err(format!("خطا در شروع اتصال: {}", reason));
     }
-    // در حالت TUN: خطای ساخت آداپتور گاهی بعد از بالا آمدن پورت رخ می‌دهد
+   // در حالت TUN فقط بسته‌شدن واقعی Xray را خطا حساب کن
     if tun {
-        std::thread::sleep(Duration::from_millis(1000));
+    // فرصت بده آداپتور TUN کامل ساخته شود
+    std::thread::sleep(Duration::from_millis(1500));
 
-        let died = matches!(child.try_wait(), Ok(Some(_)));
-        let log_msg = tun_log_error();
-
-        if died || log_msg.is_some() {
-            let reason = child_error(child, &log_path);
-            let detail = if died {
-                reason
-            } else {
-                log_msg.unwrap_or(reason)
-            };
-            return Err(format!("خطا در راه‌اندازی TUN: {}", detail));
-        }
+    // اگر Xray واقعاً بسته شده باشد، خطای واقعی لاگ را نمایش بده
+    if let Ok(Some(_)) = child.try_wait() {
+        let reason = child_error(child, &log_path);
+        return Err(format!("خطا در راه‌اندازی TUN: {}", reason));
     }
+}
 
     if with_proxy {
         if let Err(e) = set_proxy(true, Some(&ports)) {
