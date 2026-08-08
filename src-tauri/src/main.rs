@@ -658,25 +658,29 @@ fn run_test_one(link: &str) -> Result<serde_json::Value, String> {
         }
     };
 
-    // صبر کن تا پورت محلی بالا بیاید؛ اگر هسته از کار افتاد دلیلش را بگو
-        if !wait_port(port, Duration::from_secs(2)) {
-        let reason = child_error(child, &tmp_log);
-        let _ = fs::remove_file(&tmp);
-        let _ = fs::remove_file(&tmp_log);
-        return Ok(json!({ "ok": false, "ms": null, "err": reason }));
-    }
+   // صبر کن تا پورت محلی بالا بیاید؛ اگر هسته از کار افتاد دلیلش را بگو
+if !wait_port(port, Duration::from_secs(2)) {
+    let reason = child_error(child, &tmp_log);
+    let _ = fs::remove_file(&tmp);
+    let _ = fs::remove_file(&tmp_log);
+    return Ok(json!({ "ok": false, "ms": null, "err": reason }));
+}
 
-    // سه پینگ واقعی؛ بهترین نتیجه ملاک است
-    let proxy = format!("http://127.0.0.1:{}", port);
-    let mut best: Option<f64> = None;
-    for _ in 0..1 {
-        if let Ok(ms) = rtt_ms(Some(&proxy), 3) {
-            best = Some(match best {
-                Some(b) => b.min(ms),
-                None => ms,
-            });
-        }
-    }
+let proxy = format!("http://127.0.0.1:{}", port);
+
+// مرحله اول: گرم‌کردن اتصال، DNS و Handshake
+// نتیجه این مرحله نمایش داده نمی‌شود.
+let warmup = rtt_ms(Some(&proxy), 3);
+
+// مرحله دوم: اندازه‌گیری واقعی؛ مانند رفتار Throne
+// اگر مرحله اول شکست بخورد، مرحله دوم اجرا نمی‌شود.
+let best: Option<f64> = if warmup.is_ok() {
+    rtt_ms(Some(&proxy), 3).ok()
+} else {
+    None
+};
+
+
 
     let _ = child.kill();
     let _ = child.wait();
