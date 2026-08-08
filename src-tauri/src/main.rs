@@ -330,7 +330,7 @@ fn build_tun_config(link: &str, metrics: u16) -> Option<String> {
                     "mtu": 1500,
                     "autoRoute": true,
                     "strictRoute": false,
-                    "stack": "system"
+                    "stack": "gvisor"
                 },
                 "sniffing": {
                     "enabled": true,
@@ -501,6 +501,25 @@ fn child_error(mut child: Child, log_path: &Path) -> String {
     }
     reason
 }
+/// اگر هسته در حالت TUN خطای ساخت آداپتور داده باشد، همان خط را از لاگ برمی‌گرداند.
+fn tun_log_error() -> Option<String> {
+    let text = fs::read_to_string(core_log_path()).ok()?;
+    let markers = [
+        "failed to find matching adapter",
+        "element not found",
+        "failed to create server",
+        "failed to create adapter",
+        "initialization has already been completed",
+        "wintun",
+    ];
+    for line in text.lines() {
+        let low = line.to_lowercase();
+        if markers.iter().any(|m| low.contains(m)) {
+            return Some(line.trim().to_string());
+        }
+    }
+    None
+}
 
 fn start_core(link: &str, tun: bool, state: State<'_, AppState>, with_proxy: bool) -> Result<(), String> {
     // پورت‌های آزاد برای هر اتصال — تداخل با برنامه‌های دیگر غیرممکن می‌شود
@@ -555,6 +574,23 @@ fn start_core(link: &str, tun: bool, state: State<'_, AppState>, with_proxy: boo
         let reason = child_error(child, &log_path);
         return Err(format!("خطا در شروع اتصال: {}", reason));
     }
+    // در حالت TUN: خطای ساخت آداپتور گاهی بعد از بالا آمدن پورت رخ می‌دهد
+    if tun {
+        std::thread::sleep(Duration::from_millis(1000));
+
+        let died = matches!(child.try_wait(), Ok(Some(_)));
+        let log_msg = tun_log_error();
+
+        if died || log_msg.is_some() {
+            let reason = child_error(child, &log_path);
+            let detail = if died {
+                reason
+            } else {
+                log_msg.unwrap_or(reason)
+            };
+            return Err(format!("خطا در راه‌اندازی TUN: {}", detail));
+        }
+    }
 
     if with_proxy {
         if let Err(e) = set_proxy(true, Some(&ports)) {
@@ -602,7 +638,7 @@ fn rtt_ms(proxy: Option<&str>, timeout: u32) -> Result<f64, String> {
         "%{time_total}".into(),
     ];
     proxy_arg(proxy, &mut args);
-    args.push("http://www.gstatic.com/generate_204".into());
+    args.push("http://cp.cloudflare.com/generate_204".into());
     let (ok, out) = curl_run(&args)?;
     if !ok {
         return Err("انقضای زمان".into());
@@ -648,7 +684,7 @@ fn run_test_one(link: &str) -> Result<serde_json::Value, String> {
     };
 
     // صبر کن تا پورت محلی بالا بیاید؛ اگر هسته از کار افتاد دلیلش را بگو
-        if !wait_port(port, Duration::from_secs(3)) {
+        if !wait_port(port, Duration::from_secs(2)) {
         let reason = child_error(child, &tmp_log);
         let _ = fs::remove_file(&tmp);
         let _ = fs::remove_file(&tmp_log);
@@ -658,8 +694,8 @@ fn run_test_one(link: &str) -> Result<serde_json::Value, String> {
     // سه پینگ واقعی؛ بهترین نتیجه ملاک است
     let proxy = format!("http://127.0.0.1:{}", port);
     let mut best: Option<f64> = None;
-    for _ in 0..3 {
-        if let Ok(ms) = rtt_ms(Some(&proxy), 2) {
+    for _ in 0..1 {
+        if let Ok(ms) = rtt_ms(Some(&proxy), 3) {
             best = Some(match best {
                 Some(b) => b.min(ms),
                 None => ms,
