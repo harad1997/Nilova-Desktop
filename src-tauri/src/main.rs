@@ -225,8 +225,9 @@ fn build_outbound(link: &str) -> Option<serde_json::Value> {
             ws.insert("path".into(), json!(i.path));
         }
         if !i.host.is_empty() {
-            ws.insert("headers".into(), json!({ "Host": i.host }));
-        }
+                 ws.insert("host".into(), json!(i.host));
+}
+
         stream.insert("wsSettings".into(), json!(ws));
     }
     if i.network == "grpc" {
@@ -266,7 +267,7 @@ fn finalize(outbound: serde_json::Value, http: u16, socks: u16, metrics: u16) ->
         obj.insert("tag".into(), json!("proxy"));
     }
     json!({
-        "log": { "loglevel": "warning" },
+        "log": { "loglevel": "info" },
         "stats": {},
         "policy": {
             "system": {
@@ -309,7 +310,7 @@ fn build_tun_config(link: &str, metrics: u16) -> Option<String> {
         obj.insert("tag".into(), json!("proxy"));
     }
     let config = json!({
-        "log": { "loglevel": "warning" },
+        "log": { "loglevel": "info" },
         "stats": {},
         "policy": {
             "system": {
@@ -326,12 +327,13 @@ fn build_tun_config(link: &str, metrics: u16) -> Option<String> {
                 "tag": "tun-in",
                 "protocol": "tun",
                 "settings": {
-                    "address": ["10.0.0.1", "fd00::1"],
-                    "mtu": 1500,
-                    "autoRoute": true,
-                    "strictRoute": false,
-                    "stack": "gvisor"
-                },
+    "name": "xray0",
+    "mtu": 1500,
+    "gateway": ["10.0.0.1/30", "fd00::1/126"],
+    "dns": ["1.1.1.1", "8.8.8.8"],
+    "autoSystemRoutingTable": ["0.0.0.0/0", "::/0"],
+    "autoOutboundsInterface": "auto"
+},
                 "sniffing": {
                     "enabled": true,
                     "destOverride": ["http", "tls", "quic"]
@@ -403,6 +405,20 @@ fn is_admin() -> bool {
         Ok(o) => String::from_utf8_lossy(&o.stdout).contains("S-1-16-12288"),
         Err(_) => false,
     }
+}
+#[tauri::command]
+fn app_is_admin() -> bool {
+    is_admin()
+}
+#[tauri::command]
+fn get_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+#[tauri::command]
+fn get_startup_tun() -> Option<String> {
+    std::env::args()
+        .skip(1)
+        .find_map(|arg| arg.strip_prefix("--tun=").map(|l| l.trim_matches('"').to_string()))
 }
 
 /* ================= اجرای هسته ================= */
@@ -613,7 +629,7 @@ fn rtt_ms(proxy: Option<&str>, timeout: u32) -> Result<f64, String> {
         "%{time_total}".into(),
     ];
     proxy_arg(proxy, &mut args);
-    args.push("http://cp.cloudflare.com/generate_204".into());
+    args.push("https://www.gstatic.com/generate_204".into());
     let (ok, out) = curl_run(&args)?;
     if !ok {
         return Err("انقضای زمان".into());
@@ -624,7 +640,9 @@ fn rtt_ms(proxy: Option<&str>, timeout: u32) -> Result<f64, String> {
 
 /// تست واقعی یک کانفیگ: هسته را با همان کانفیگ روشن می‌کند و از داخل آن پینگ می‌گیرد.
 fn run_test_one(link: &str) -> Result<serde_json::Value, String> {
-    let outbound = build_outbound(link).ok_or("لینک کانفیگ نامعتبر است")?;
+    let info = parse_vless(link).ok_or("لینک کانفیگ نامعتبر است")?;
+let outbound = build_outbound(link).ok_or("لینک کانفیگ نامعتبر است")?;
+
 
     // یک پورت آزاد پیدا کن
     let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
@@ -660,25 +678,54 @@ fn run_test_one(link: &str) -> Result<serde_json::Value, String> {
 
    // صبر کن تا پورت محلی بالا بیاید؛ اگر هسته از کار افتاد دلیلش را بگو
 if !wait_port(port, Duration::from_secs(2)) {
-    let reason = child_error(child, &tmp_log);
+    let _ = child.kill();
+    let _ = child.wait();
+
     let _ = fs::remove_file(&tmp);
     let _ = fs::remove_file(&tmp_log);
-    return Ok(json!({ "ok": false, "ms": null, "err": reason }));
+
+    return Ok(json!({
+        "ok": false,
+        "ms": null,
+        "err": "در دسترس نیست"
+    }));
 }
 
 let proxy = format!("http://127.0.0.1:{}", port);
 
-// مرحله اول: گرم‌کردن اتصال، DNS و Handshake
-// نتیجه این مرحله نمایش داده نمی‌شود.
-let warmup = rtt_ms(Some(&proxy), 3);
+// مرحله اول: بررسی سلامت واقعی کانفیگ از داخل تونل Xray
+let real_ms = rtt_ms(Some(&proxy), 5).ok();
 
-// مرحله دوم: اندازه‌گیری واقعی؛ مانند رفتار Throne
-// اگر مرحله اول شکست بخورد، مرحله دوم اجرا نمی‌شود.
-let best: Option<f64> = if warmup.is_ok() {
-    rtt_ms(Some(&proxy), 3).ok()
+// مرحله دوم: TCP Ping مستقیم شبیه TCPing در کلاینت‌های دیگر
+let tcp_ms: Option<f64> = if real_ms.is_some() {
+    use std::net::ToSocketAddrs;
+
+    let endpoint = format!("{}:{}", info.address, info.port);
+
+    match endpoint.as_str().to_socket_addrs() {
+        Ok(mut addrs) => {
+            addrs.next().and_then(|socket_addr| {
+                let started = Instant::now();
+
+                TcpStream::connect_timeout(
+                    &socket_addr,
+                    Duration::from_millis(1500),
+                )
+                .ok()?;
+
+                Some(started.elapsed().as_secs_f64() * 1000.0)
+            })
+        }
+        Err(_) => None,
+    }
 } else {
     None
 };
+
+// اولویت نمایش:
+// ۱) TCP Ping اگر موجود باشد
+// ۲) Real Delay اگر TCP Ping ممکن نباشد
+let best = tcp_ms.or(real_ms);
 
 
 
@@ -688,13 +735,23 @@ let best: Option<f64> = if warmup.is_ok() {
     let _ = fs::remove_file(&tmp_log);
 
     match best {
-        Some(ms) => Ok(json!({ "ok": true, "ms": ms.round() as u64, "err": null })),
-        None => Ok(json!({
-            "ok": false,
-            "ms": null,
-            "err": "اتصال از داخل کانفیگ برقرار نشد؛ سرور در دسترس نیست یا کانفیگ ناقص است"
-        })),
-    }
+    Some(ms) => Ok(json!({
+        "ok": true,
+        "ms": ms.round() as u64,
+        "tcpMs": tcp_ms.map(|v| v.round() as u64),
+        "realMs": real_ms.map(|v| v.round() as u64),
+        "err": null
+    })),
+
+    None => Ok(json!({
+        "ok": false,
+        "ms": null,
+        "tcpMs": null,
+        "realMs": null,
+        "err": "در دسترس نیست"
+    })),
+  }
+
 }
 
 /* ================= نشانی اینترنتی ================= */
@@ -1268,14 +1325,6 @@ async fn get_traffic(state: State<'_, AppState>) -> Result<serde_json::Value, St
 }
 
 fn main() {
-    // آرگومان --tun=... یعنی نمونهٔ مدیر باید همین حالا حالت TUN را وصل کند (از پنجرهٔ UAC آمده)
-    let mut tun_link: Option<String> = None;
-    for a in std::env::args().skip(1) {
-        if let Some(rest) = a.strip_prefix("--tun=") {
-            tun_link = Some(rest.trim_matches('"').to_string());
-        }
-    }
-
     tauri::Builder::default()
         .manage(AppState {
             child: Mutex::new(None),
@@ -1283,29 +1332,13 @@ fn main() {
             ports: Mutex::new(None),
             log_pos: Mutex::new(0),
         })
-        .setup(move |app| {
-            if let Some(link) = tun_link {
-                let handle = app.handle().clone();
-                std::thread::spawn(move || {
-                    // کمی صبر کن تا پنجره و رابط بالا بیاید
-                    std::thread::sleep(Duration::from_millis(900));
-                    let state = handle.state::<AppState>();
-                    match start_core(&link, true, state, false) {
-                        Ok(_) => {
-                            let _ = handle.emit("core_connected", ());
-                        }
-                        Err(e) => {
-                            let _ = handle.emit("core_error", e);
-                        }
-                    }
-                });
-            }
-            Ok(())
-        })
-        .invoke_handler(tauri::generate_handler![
-            run_xray,
-            run_tun,
-            stop_xray,
+                     .invoke_handler(tauri::generate_handler![
+    run_xray,
+    run_tun,
+    app_is_admin,
+    get_version,
+    get_startup_tun,
+    stop_xray,
             test_one,
             get_ips,
             speed_test,
