@@ -73,6 +73,21 @@ body{
 .brand:active{transform:translateY(-1px) scale(1.02)}
 .brand svg{width:40px;height:40px;display:block;transition:transform .22s cubic-bezier(.2,.8,.3,1)}
 .brand:hover svg{transform:scale(1.08)}
+.ver{
+  font-size:10px;
+  color:var(--muted);
+  margin-left:8px;
+  direction:ltr;
+}
+.admin{
+  font-size:10px;
+  padding:2px 8px;
+  border-radius:6px;
+  margin-left:8px;
+  border:1px solid var(--line);
+  color:var(--teal);
+}
+
 .wordmark{
   background:linear-gradient(135deg,#4F46E5 0%,#06B6D4 62%,#A5F3FC 100%);
   -webkit-background-clip:text;background-clip:text;color:transparent;
@@ -543,8 +558,12 @@ select:focus,input.tin:focus{outline:none;border-color:var(--accent-edge)}
 
     <!-- ==================== نوار بالا ==================== -->
     <div class="titlebar">
-      <span class="name"><span class="wordmark">Nilova</span></span>
-      <span class="crumb" id="crumb">داشبورد</span>
+  <span class="name">
+    <span class="wordmark">Nilova</span>
+    <span class="ver" id="appVersion"></span>
+    <span class="admin" id="appAdmin"></span>
+  </span>
+  <span class="crumb" id="crumb">داشبورد</span>
       <div class="themes">
         <span class="lb">پوسته</span>
         <span class="sw on" data-theme="dark"  title="تاریک"     style="background:#0d1317"></span>
@@ -924,6 +943,31 @@ select:focus,input.tin:focus{outline:none;border-color:var(--accent-edge)}
 
 /* ============ حالت واقعی (داخل برنامه) یا نمایشی (پیش‌نمایش) ============ */
 const inTauri = !!(window.__TAURI__ && window.__TAURI__.core);
+/* نسخه و وضعیت اجرا با دسترسی مدیر */
+(async () => {
+  const vEl = document.getElementById("appVersion");
+  const aEl = document.getElementById("appAdmin");
+  if(!vEl || !aEl) return;
+
+  if(inTauri){
+    try{
+      const version = await window.__TAURI__.core.invoke("get_version");
+      vEl.textContent = "v" + version;
+    }catch(e){
+      vEl.textContent = "v0.1.0";
+    }
+    try{
+      const admin = await window.__TAURI__.core.invoke("app_is_admin");
+      aEl.textContent = admin ? "Run as Admin" : "Not run as Admin";
+    }catch(e){
+      aEl.textContent = "";
+    }
+  }else{
+    vEl.textContent = "v0.1.0";
+    aEl.textContent = "Preview";
+  }
+})();
+
 /* تابع کادر تأیید اختصاصی */
 const askConfirm = (message) => new Promise(resolve => {
   const ov = document.createElement("div");
@@ -1058,16 +1102,13 @@ const askConfirm = (message) => new Promise(resolve => {
     if(!server) return;
 
     /* کپی لینک */
-    if(action === "copy"){
-      if(!server.raw){
-        alert("لینک این سرور موجود نیست.");
-        return;
-      }
+if(action === "copy"){
+  if(server.raw){
+    await copyText(server.raw);
+  }
+  return;
+}
 
-      const ok = await copyText(server.raw);
-      alert(ok ? "لینک کپی شد." : "کپی لینک ناموفق بود.");
-      return;
-    }
 
     /* تست پینگ */
     if(action === "ping"){
@@ -1134,6 +1175,7 @@ const askConfirm = (message) => new Promise(resolve => {
 
 let isConnected = false;
 let connStarted = 0;
+let connectBusy = false;   // جلوگیری از اتصال هم‌زمان
 const sparkDn = [], sparkUp = [];
 let spMax = 0;
 
@@ -1231,9 +1273,26 @@ document.addEventListener("click", () => {
 });
 
 /* ================= رسم سرورها ================= */
+function getFlag(cc){
+  cc = String(cc || "").trim().toUpperCase();
+
+  if(!/^[A-Z]{2}$/.test(cc) || cc === "??"){
+    return "🏳️";
+  }
+
+  return String.fromCodePoint(
+    ...[...cc].map(ch => ch.charCodeAt(0) + 127397)
+  );
+}
+
 function flagHtml(cc){
-  const c = `var(${HUE[cc]||"--muted"})`;
-  return `<span class="fl" style="background:color-mix(in srgb, ${c} 16%, transparent);color:${c}">${cc}</span>`;
+  const c = `var(${HUE[cc] || "--muted"})`;
+
+  return `<span class="fl"
+    title="${cc || "نامشخص"}"
+    style="background:color-mix(in srgb, ${c} 16%, transparent);color:${c}">
+    ${getFlag(cc)}
+  </span>`;
 }
 const dotHtml = m => `<span class="dot ${msCls(m)}"></span>`;
 
@@ -1468,12 +1527,10 @@ await saveUserData();
   }
 }
 
-function delSub(id){
+async function delSub(id){
   const s = subOf(id);
   if(!s) return;
-  let sure = false;
-  try{ sure = confirm(`اشتراک «${s.n}» و سرورهایش حذف شود؟`); }catch(e){ sure = true; }
-  if(!sure) return;
+   if(!(await askConfirm(`اشتراک «${s.n}» و سرورهایش حذف شود؟`))) return;
   SUBS.splice(SUBS.indexOf(s), 1);
   for(let i = SERVERS.length - 1; i >= 0; i--){
     if(SERVERS[i].sub === id) SERVERS.splice(i, 1);
@@ -1485,7 +1542,7 @@ function delSub(id){
   document.getElementById("allSub").value = activeSub;
   draw("dash"); draw("all"); updateLive();
   say("subHint", "اشتراک حذف شد.", "good");
-saveUserData();
+  await saveUserData();
 
 }
 
@@ -1578,8 +1635,13 @@ function parseConfig(link){
     host = m[1]; port = m[2];
   }
   if(!host || !port) return null;
-  name = name.replace(/[\u{1F1E6}-\u{1F1FF}]/gu, "").trim() || `${host}`;
-  return {cc: ccFrom(name, host), name, host: `${host}:${port}`,
+
+const ccode = ccFrom(name, host);
+
+name = name.replace(/[\u{1F1E6}-\u{1F1FF}]/gu, "").trim() || `${host}`;
+
+return {cc: ccode, name, host: `${host}:${port}`,
+
           proto: kind === "ss" ? "trojan" : kind,
           ms: null, sub: "manual"};
 }
@@ -1911,43 +1973,32 @@ document.querySelectorAll("#p-route .sg").forEach(sg=>{
     });
   });
 
-  /* ---------- رویدادهای هسته (اتصال خودکار TUN از نمونهٔ مدیر) ---------- */
-  if(inTauri && window.__TAURI__.event){
-    window.__TAURI__.event.listen("core_connected", () => {
-      curMode = 1;
-      document.querySelectorAll("#p-dash .sg[data-mode]").forEach(x => x.classList.toggle("on", Number(x.dataset.mode) === 1));
-      const md = document.getElementById("mdesc");
-      if(md) md.textContent = "پوشش کل ترافیک ویندوز — نیازمند اجرا به عنوان مدیر.";
-      isConnected = true; connectedSrv = activeSrv; updateBtn(); connStarted = Date.now();
-      refreshIps();
-      say("cfgHint", "اتصال TUN برقرار شد.", "good");
-    });
-    window.__TAURI__.event.listen("core_error", e => {
-      say("cfgHint", "خطا در اتصال خودکار TUN: " + String((e && e.payload) || ""), "bad");
-    });
-  }
-
   /* ---------- اتصال به موتور ---------- */
 
 async function connectNow(){
+  if(connectBusy) return;
+
   const s = SERVERS[activeSrv];
 
-  // اول کانفیگ جدید را بررسی کن؛ اتصال قبلی فعلاً قطع نشود
   if(!s || !s.raw){
-    say("cfgHint","اول یک کانفیگ اضافه کن و از لیست انتخابش کن.","bad");
+    say("cfgHint", "اول یک کانفیگ اضافه کن و از لیست انتخابش کن.", "bad");
     return;
   }
 
   if(!s.raw.startsWith("vless://")){
-    say("cfgHint","فعلاً فقط کانفیگ VLESS پشتیبانی میشود.","bad");
+    say("cfgHint", "فعلاً فقط کانفیگ VLESS پشتیبانی میشود.", "bad");
     return;
   }
 
-  // بازخورد فوری هنگام سوییچ خودکار
-  const btn = document.getElementById("toggleBtn");
-  if(btn) btn.textContent = "در حال اتصال…";
+  connectBusy = true;
 
-  // حالا که کانفیگ جدید معتبر است، اتصال قبلی را قطع کن
+  const btn = document.getElementById("toggleBtn");
+
+  if(btn){
+    btn.textContent = "در حال اتصال…";
+    btn.disabled = true;
+  }
+
   if(isConnected){
     await disconnectNow();
   }
@@ -1963,15 +2014,25 @@ async function connectNow(){
     updateBtn();
     connStarted = Date.now();
     updateLive();
+
     document.getElementById("ipProxyCc").textContent = "?";
     document.getElementById("ipProxyV").textContent = "در حال بررسی…";
+
     setTimeout(refreshIps, 2000);
     say("cfgHint", result, "good");
+
   }catch(e){
     isConnected = false;
     connectedSrv = -1;
     updateBtn();
     say("cfgHint", String(e), "bad");
+
+  }finally{
+    connectBusy = false;
+
+    if(btn){
+      btn.disabled = false;
+    }
   }
 }
 
@@ -1989,8 +2050,13 @@ async function disconnectNow(){
     document.getElementById("spUp").textContent = "—";
     document.getElementById("ipProxyV").textContent = "—";
     document.getElementById("ipRealV").textContent = "—";
+
     say("cfgHint", result, "good");
+
   }catch(e){
+    isConnected = false;
+    connectedSrv = -1;
+    updateBtn();
     say("cfgHint", String(e), "bad");
   }
 }
@@ -2078,11 +2144,11 @@ async function refreshIps(){
       const r = await window.__TAURI__.core.invoke("get_ips", { mode: curMode });
       const p = r.proxy || {}, d = r.direct || {};
       if(p.ip){
-        document.getElementById("ipProxyCc").textContent = p.cc || "?";
+        document.getElementById("ipProxyCc").textContent = getFlag(p.cc);
         document.getElementById("ipProxyV").innerHTML = `${p.ip}${p.city ? ` <em>${p.city}</em>` : ""}`;
       }
       if(d.ip){
-        document.getElementById("ipRealCc").textContent = d.cc || "?";
+        document.getElementById("ipRealCc").textContent = getFlag(d.cc);
         const parts = d.ip.split(".");
         const masked = parts.length === 4
           ? parts[0] + "." + parts[1] + ".•••.•••"
@@ -2243,8 +2309,44 @@ document.getElementById(CTX.all.vset).innerHTML = vsetHtml("all");
     console.log("اطلاعات قبلی پیدا نشد.");
   }
 }
+async function autoConnectElevatedTun(){
+  if(!inTauri) return;
 
-loadUserData();
+  try{
+    const tunLink = await window.__TAURI__.core.invoke("get_startup_tun");
+
+    if(!tunLink) return;
+
+    const idx = SERVERS.findIndex(s => s.raw === tunLink);
+
+    if(idx < 0){
+      say("cfgHint", "کانفیگ TUN پیدا نشد.", "bad");
+      return;
+    }
+
+    curMode = 1;
+    activeSrv = idx;
+
+    document
+      .querySelectorAll("#p-dash .sg[data-mode]")
+      .forEach(x => x.classList.toggle("on", Number(x.dataset.mode) === 1));
+
+    const md = document.getElementById("mdesc");
+    if(md){
+      md.textContent = "پوشش کل ترافیک ویندوز — نیازمند اجرا به عنوان مدیر.";
+    }
+
+    pickServer(idx);
+
+    // فقط یک بار اتصال را انجام می‌دهد
+    await connectNow();
+
+  }catch(e){
+    say("cfgHint", "خطا در اتصال خودکار TUN: " + String(e), "bad");
+  }
+}
+
+loadUserData().then(autoConnectElevatedTun);
 
 </script>
 </body>
