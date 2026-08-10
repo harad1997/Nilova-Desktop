@@ -83,11 +83,15 @@ struct AppState {
     traffic: Mutex<TrafficAcc>,
     ports: Mutex<Option<CorePorts>>,
     log_pos: Mutex<u64>,
+
+    // Routeهای موقت حالت TUN برای پاک‌سازی هنگام قطع اتصال
+    tun_bypasses: Mutex<Vec<String>>,
+    tun_default_route: Mutex<bool>,
+    tun_ifindex: Mutex<Option<String>>,
 }
 
 const PROXY_OVERRIDE: &str = "<local>";
-const INTERNET_SETTINGS: &str =
-    r"Software\Microsoft\Windows\CurrentVersion\Internet Settings";
+const INTERNET_SETTINGS: &str = r"Software\Microsoft\Windows\CurrentVersion\Internet Settings";
 
 /* ================= ساخت پیکربندی ================= */
 
@@ -165,14 +169,158 @@ fn parse_vless(link: &str) -> Option<VlessInfo> {
     Some(info)
 }
 
-/// خروجی VLESS را با تمام تنظیمات امنیتی و انتقال می‌سازد (مشترک پروکسی و TUN).
+/// بر اساس نوع لینک، تابع مناسب را صدا می‌زند.
 fn build_outbound(link: &str) -> Option<serde_json::Value> {
+    if link.starts_with("vmess://") {
+        build_vmess_outbound(link)
+    } else if link.starts_with("trojan://") {
+        build_trojan_outbound(link)
+    } else if link.starts_with("ss://") {
+        build_ss_outbound(link)
+    } else if link.starts_with("socks5://") {
+        build_socks_outbound(link)
+    } else if link.starts_with("http://") {
+        build_http_outbound(link)
+    } else if link.starts_with("wireguard://") || link.starts_with("wg://") {
+        build_wireguard_outbound(link)
+    } else {
+        build_vless_outbound(link)
+    }
+}
+
+/// دیکد سادهٔ base64 (استاندارد و URL-safe) بدون padding سخت‌گیرانه.
+fn b64decode(s: &str) -> Option<Vec<u8>> {
+    let mut clean: String = s
+        .chars()
+        .filter(|c| *c != '\n' && *c != '\r' && *c != ' ')
+        .collect();
+
+    // URL-safe به استاندارد تبدیل کن
+    clean = clean.replace('-', "+").replace('_', "/");
+
+    // حذف padding موجود؛ ادامهٔ تابع خودش بخش پایانی Base64 را پردازش می‌کند.
+    clean = clean.trim_end_matches('=').to_string();
+
+    const T: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+    let mut out = Vec::new();
+    let bytes = clean.as_bytes();
+
+    let mut i = 0;
+    while i + 4 <= bytes.len() {
+        let mut n = 0u32;
+        for &c in &bytes[i..i + 4] {
+            let v = T.iter().position(|&t| t == c)? as u32;
+            n = (n << 6) | v;
+        }
+        out.push((n >> 16) as u8);
+        out.push((n >> 8) as u8);
+        out.push(n as u8);
+        i += 4;
+    }
+
+    // پدینگ آخر
+    let rem = bytes.len() - i;
+    if rem == 2 {
+        let a = T.iter().position(|&t| t == bytes[i])? as u32;
+        let b = T.iter().position(|&t| t == bytes[i + 1])? as u32;
+        out.push(((a << 2) | (b >> 4)) as u8);
+    } else if rem == 3 {
+        let a = T.iter().position(|&t| t == bytes[i])? as u32;
+        let b = T.iter().position(|&t| t == bytes[i + 1])? as u32;
+        let c = T.iter().position(|&t| t == bytes[i + 2])? as u32;
+        out.push(((a << 2) | (b >> 4)) as u8);
+        out.push(((b << 4) | (c >> 2)) as u8);
+    }
+
+    Some(out)
+}
+/// خروجی VMess را از لینک vmess:// (JSON بیس۶۴) می‌سازد.
+fn build_vmess_outbound(link: &str) -> Option<serde_json::Value> {
+    let raw = link.strip_prefix("vmess://")?;
+    let json_str = String::from_utf8(b64decode(raw)?).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&json_str).ok()?;
+
+    let address = v["add"].as_str()?.to_string();
+    let port: u16 = v["port"].as_str()?.parse().ok()?;
+    let id = v["id"].as_str()?.to_string();
+    let aid = v["aid"].as_str().unwrap_or("0").to_string();
+    let scy = v["scy"].as_str().unwrap_or("auto").to_string();
+    let net = v["net"].as_str().unwrap_or("tcp").to_string();
+    let host = v["host"].as_str().unwrap_or("").to_string();
+    let path = v["path"].as_str().unwrap_or("").to_string();
+    let tls = v["tls"].as_str().unwrap_or("").to_string();
+    let sni = v["sni"].as_str().unwrap_or("").to_string();
+    let fp = v["fp"].as_str().unwrap_or("").to_string();
+    let service_name = v["serviceName"].as_str().unwrap_or("").to_string();
+
+    let mut stream = serde_json::Map::new();
+    stream.insert("network".into(), json!(net));
+
+    if tls == "tls" {
+        let mut t = serde_json::Map::new();
+        let server_name = if !sni.is_empty() {
+            sni.clone()
+        } else if !host.is_empty() {
+            host.clone()
+        } else {
+            address.clone()
+        };
+        t.insert("serverName".into(), json!(server_name));
+        if !fp.is_empty() {
+            t.insert("fingerprint".into(), json!(fp));
+        }
+        stream.insert("tlsSettings".into(), json!(t));
+    }
+
+    if net == "ws" {
+        let mut ws = serde_json::Map::new();
+        if !path.is_empty() {
+            ws.insert("path".into(), json!(path));
+        }
+        if !host.is_empty() {
+            ws.insert("host".into(), json!(host));
+        }
+        stream.insert("wsSettings".into(), json!(ws));
+    }
+
+    if net == "grpc" && !service_name.is_empty() {
+        let mut gr = serde_json::Map::new();
+        gr.insert("serviceName".into(), json!(service_name));
+        stream.insert("grpcSettings".into(), json!(gr));
+    }
+
+    let mut user = serde_json::Map::new();
+    user.insert("id".into(), json!(id));
+    user.insert("alterId".into(), json!(aid));
+    user.insert("security".into(), json!(scy));
+
+    Some(json!({
+        "protocol": "vmess",
+        "settings": {
+            "vnext": [
+                {
+                    "address": address,
+                    "port": port,
+                    "users": [ user ]
+                }
+            ]
+        },
+        "streamSettings": stream
+    }))
+}
+
+fn build_vless_outbound(link: &str) -> Option<serde_json::Value> {
     let i = parse_vless(link)?;
     let port: u16 = i.port.parse().ok()?;
 
     let mut stream = serde_json::Map::new();
     stream.insert("network".into(), json!(i.network));
-    let security = if i.security.is_empty() { "none" } else { i.security.as_str() };
+    let security = if i.security.is_empty() {
+        "none"
+    } else {
+        i.security.as_str()
+    };
     stream.insert("security".into(), json!(security));
 
     if i.security == "tls" {
@@ -201,7 +349,11 @@ fn build_outbound(link: &str) -> Option<serde_json::Value> {
     }
     if i.security == "reality" {
         let mut rt = serde_json::Map::new();
-        let server_name = if !i.sni.is_empty() { i.sni.clone() } else { i.host.clone() };
+        let server_name = if !i.sni.is_empty() {
+            i.sni.clone()
+        } else {
+            i.host.clone()
+        };
         if !server_name.is_empty() {
             rt.insert("serverName".into(), json!(server_name));
         }
@@ -225,8 +377,8 @@ fn build_outbound(link: &str) -> Option<serde_json::Value> {
             ws.insert("path".into(), json!(i.path));
         }
         if !i.host.is_empty() {
-                 ws.insert("host".into(), json!(i.host));
-}
+            ws.insert("host".into(), json!(i.host));
+        }
 
         stream.insert("wsSettings".into(), json!(ws));
     }
@@ -257,6 +409,487 @@ fn build_outbound(link: &str) -> Option<serde_json::Value> {
             ]
         },
         "streamSettings": stream
+    }))
+}
+/// اطلاعات یک لینک Trojan را استخراج میکند (tls / ws / grpc).
+struct TrojanInfo {
+    password: String,
+    address: String,
+    port: String,
+    network: String,
+    path: String,
+    host: String,
+    security: String,
+    sni: String,
+    fp: String,
+    alpn: String,
+    service_name: String,
+}
+
+fn parse_trojan(link: &str) -> Option<TrojanInfo> {
+    let rest = link.strip_prefix("trojan://")?;
+    let main = rest.split('#').next()?;
+    let at = main.find('@')?;
+    let password = main[..at].to_string();
+    let after = &main[at + 1..];
+    let q = after.find('?');
+    let (host_port, query) = match q {
+        Some(i) => (&after[..i], &after[i + 1..]),
+        None => (after, ""),
+    };
+    let colon = host_port.rfind(':')?;
+    let address = host_port[..colon].to_string();
+    let port = host_port[colon + 1..].to_string();
+
+    let mut info = TrojanInfo {
+        password,
+        address,
+        port,
+        network: String::from("tcp"),
+        path: String::new(),
+        host: String::new(),
+        security: String::from("tls"), // پیشفرض تروجان TLS است
+        sni: String::new(),
+        fp: String::new(),
+        alpn: String::new(),
+        service_name: String::new(),
+    };
+    for pair in query.split('&') {
+        let mut it = pair.splitn(2, '=');
+        let k = it.next().unwrap_or("");
+        let v = it.next().unwrap_or("");
+        match k {
+            "type" => info.network = v.to_string(),
+            "path" => info.path = v.replace("%2F", "/").replace("%40", "@"),
+            "host" => info.host = v.replace("%40", "@"),
+            "security" => info.security = v.to_string(),
+            "sni" => info.sni = v.to_string(),
+            "fp" => info.fp = v.to_string(),
+            "alpn" => info.alpn = v.to_string(),
+            "serviceName" => info.service_name = v.replace("%2F", "/"),
+            _ => {}
+        }
+    }
+    Some(info)
+}
+
+/// خروجی Trojan را میسازد — ساختار streamSettings دقیقاً مثل VLESS است.
+fn build_trojan_outbound(link: &str) -> Option<serde_json::Value> {
+    let i = parse_trojan(link)?;
+    let port: u16 = i.port.parse().ok()?;
+
+    let mut stream = serde_json::Map::new();
+    stream.insert("network".into(), json!(i.network));
+    let security = if i.security.is_empty() {
+        "tls"
+    } else {
+        i.security.as_str()
+    };
+    stream.insert("security".into(), json!(security));
+
+    if i.security == "tls" {
+        let mut tls = serde_json::Map::new();
+        let server_name = if !i.sni.is_empty() {
+            i.sni.clone()
+        } else if !i.host.is_empty() {
+            i.host.clone()
+        } else {
+            i.address.clone()
+        };
+        tls.insert("serverName".into(), json!(server_name));
+        if !i.fp.is_empty() {
+            tls.insert("fingerprint".into(), json!(i.fp));
+        }
+        if !i.alpn.is_empty() {
+            let alpn: Vec<&str> = i
+                .alpn
+                .split(',')
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .collect();
+            tls.insert("alpn".into(), json!(alpn));
+        }
+        stream.insert("tlsSettings".into(), json!(tls));
+    }
+    if i.network == "ws" {
+        let mut ws = serde_json::Map::new();
+        if !i.path.is_empty() {
+            ws.insert("path".into(), json!(i.path));
+        }
+        if !i.host.is_empty() {
+            ws.insert("host".into(), json!(i.host));
+        }
+        stream.insert("wsSettings".into(), json!(ws));
+    }
+    if i.network == "grpc" {
+        let mut gr = serde_json::Map::new();
+        if !i.service_name.is_empty() {
+            gr.insert("serviceName".into(), json!(i.service_name));
+        }
+        stream.insert("grpcSettings".into(), json!(gr));
+    }
+
+    Some(json!({
+        "protocol": "trojan",
+        "settings": {
+            "servers": [
+                {
+                    "address": i.address,
+                    "port": port,
+                    "password": i.password,
+                    "level": 0
+                }
+            ]
+        },
+        "streamSettings": stream
+    }))
+}
+/// اطلاعات یک لینک Shadowsocks را استخراج میکند (هر سه قالب رایج).
+struct SsInfo {
+    method: String,
+    password: String,
+    address: String,
+    port: String,
+    plugin: String,
+}
+
+/// دیکد سادهٔ درصدی (مثل %40 و %2F) — برای پارامترهای SIP002.
+fn url_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let h = (bytes[i + 1] as char).to_digit(16);
+            let l = (bytes[i + 2] as char).to_digit(16);
+            if let (Some(h), Some(l)) = (h, l) {
+                out.push((h * 16 + l) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn b64decode_str(s: &str) -> Option<String> {
+    String::from_utf8(b64decode(s)?).ok()
+}
+
+fn parse_ss(link: &str) -> Option<SsInfo> {
+    let rest = link.strip_prefix("ss://")?;
+    let main = rest.split('#').next()?;
+    let (body, query) = match main.find('?') {
+        Some(q) => (&main[..q], &main[q + 1..]),
+        None => (main, ""),
+    };
+    let plugin = query
+        .split('&')
+        .find_map(|p| p.strip_prefix("plugin="))
+        .map(url_decode)
+        .unwrap_or_default();
+
+    // دو حالت:  userinfo@host:port  یا  کلِ base64(method:password@host:port)
+    let (method, password, host_port) = if let Some(at) = body.find('@') {
+        let userinfo = &body[..at];
+        let host_port = body[at + 1..].to_string();
+        if let Some(dec) = b64decode_str(userinfo) {
+            let c = dec.find(':')?;
+            (dec[..c].to_string(), dec[c + 1..].to_string(), host_port)
+        } else {
+            // قالب SIP002: method:password با درصدی‌بودن
+            let dec = url_decode(userinfo);
+            let c = dec.find(':')?;
+            (dec[..c].to_string(), dec[c + 1..].to_string(), host_port)
+        }
+    } else {
+        let dec = b64decode_str(body)?;
+        let at = dec.rfind('@')?;
+        let host_port = dec[at + 1..].to_string();
+        let userinfo = &dec[..at];
+        let c = userinfo.find(':')?;
+        (
+            userinfo[..c].to_string(),
+            userinfo[c + 1..].to_string(),
+            host_port,
+        )
+    };
+
+    let colon = host_port.rfind(':')?;
+    let address = host_port[..colon].to_string();
+    let port = host_port[colon + 1..].to_string();
+
+    Some(SsInfo {
+        method,
+        password,
+        address,
+        port,
+        plugin,
+    })
+}
+
+/// خروجی Shadowsocks را میسازد — بدون streamSettings چون SS روی TCP ساده است.
+fn build_ss_outbound(link: &str) -> Option<serde_json::Value> {
+    let i = parse_ss(link)?;
+    let port: u16 = i.port.parse().ok()?;
+
+    let mut server = serde_json::Map::new();
+    server.insert("address".into(), json!(i.address));
+    server.insert("port".into(), json!(port));
+    server.insert("method".into(), json!(i.method));
+    server.insert("password".into(), json!(i.password));
+    if !i.plugin.is_empty() {
+        server.insert("plugin".into(), json!(i.plugin));
+    }
+
+    Some(json!({
+        "protocol": "shadowsocks",
+        "settings": {
+            "servers": [ server ]
+        }
+    }))
+}
+/// اطلاعات یک لینک SOCKS5 یا HTTP را استخراج میکند (user/pass اختیاری).
+struct SimpleProxyInfo {
+    user: String,
+    pass: String,
+    address: String,
+    port: String,
+}
+
+fn parse_simple_proxy(link: &str, prefix: &str) -> Option<SimpleProxyInfo> {
+    let rest = link.strip_prefix(prefix)?;
+    let main = rest.split('#').next()?;
+    let body = main.split('?').next().unwrap_or(main);
+    let (userinfo, host_port) = match body.find('@') {
+        Some(at) => (&body[..at], &body[at + 1..]),
+        None => ("", body),
+    };
+    let colon = host_port.rfind(':')?;
+    let address = host_port[..colon].to_string();
+    let port = host_port[colon + 1..].to_string();
+
+    let (user, pass) = if userinfo.is_empty() {
+        (String::new(), String::new())
+    } else {
+        match userinfo.find(':') {
+            Some(c) => (userinfo[..c].to_string(), userinfo[c + 1..].to_string()),
+            None => (userinfo.to_string(), String::new()),
+        }
+    };
+
+    Some(SimpleProxyInfo {
+        user,
+        pass,
+        address,
+        port,
+    })
+}
+
+/// خروجی SOCKS5 را میسازد.
+fn build_socks_outbound(link: &str) -> Option<serde_json::Value> {
+    let i = parse_simple_proxy(link, "socks5://")?;
+    let port: u16 = i.port.parse().ok()?;
+
+    let mut server = serde_json::Map::new();
+    server.insert("address".into(), json!(i.address));
+    server.insert("port".into(), json!(port));
+    if !i.user.is_empty() || !i.pass.is_empty() {
+        let mut user = serde_json::Map::new();
+        user.insert("user".into(), json!(i.user));
+        user.insert("pass".into(), json!(i.pass));
+        server.insert("users".into(), json!([user]));
+    }
+
+    Some(json!({
+        "protocol": "socks",
+        "settings": {
+            "servers": [ server ]
+        }
+    }))
+}
+
+/// خروجی HTTP را میسازد.
+fn build_http_outbound(link: &str) -> Option<serde_json::Value> {
+    let i = parse_simple_proxy(link, "http://")?;
+    let port: u16 = i.port.parse().ok()?;
+
+    let mut server = serde_json::Map::new();
+    server.insert("address".into(), json!(i.address));
+    server.insert("port".into(), json!(port));
+    if !i.user.is_empty() || !i.pass.is_empty() {
+        let mut user = serde_json::Map::new();
+        user.insert("user".into(), json!(i.user));
+        user.insert("pass".into(), json!(i.pass));
+        server.insert("users".into(), json!([user]));
+    }
+
+    Some(json!({
+        "protocol": "http",
+        "settings": {
+            "servers": [ server ]
+        }
+    }))
+}
+/// اطلاعات یک لینک WireGuard را استخراج میکند (فرمت پارامتری و JSON بیس۶۴).
+struct WireGuardInfo {
+    secret_key: String,
+    address: String,
+    public_key: String,
+    endpoint: String,
+    pre_shared_key: String,
+    reserved: Vec<u8>,
+    mtu: u32,
+}
+
+/// یک پارامتر مشخص را از query برمیگرداند.
+fn get_param<'a>(query: &'a str, key: &str) -> Option<&'a str> {
+    let prefix = format!("{}=", key);
+    query.split('&').find_map(|p| p.strip_prefix(&prefix))
+}
+
+/// اولین پارامتری که با یکی از کلیدهای دادهشده باشد را برمیگرداند.
+fn get_param_any<'a>(query: &'a str, keys: &[&str]) -> Option<&'a str> {
+    keys.iter().find_map(|k| get_param(query, k))
+}
+
+fn parse_wireguard(link: &str) -> Option<WireGuardInfo> {
+    let rest = link
+        .strip_prefix("wireguard://")
+        .or_else(|| link.strip_prefix("wg://"))?;
+    let main = rest.split('#').next()?;
+    let (query, body) = match main.find('?') {
+        Some(q) => (&main[q + 1..], &main[..q]),
+        None => ("", main),
+    };
+
+    if body.contains('@') || !query.is_empty() {
+        // فرمت پارامتری: publickey@host:port?privateKey=...&ip=...&psk=...
+        let (public_key, endpoint) = if let Some(at) = body.find('@') {
+            (
+                url_decode(&body[..at]),
+                body[at + 1..].trim_end_matches('/').to_string(),
+            )
+        } else {
+            let pk = get_param_any(
+                query,
+                &["publicKey", "public_key", "peer_pk", "peer_public_key"],
+            )?;
+            (url_decode(pk), body.trim_end_matches('/').to_string())
+        };
+        let secret_key = get_param_any(query, &["privateKey", "private_key", "pk"])
+            .map(url_decode)
+            .unwrap_or_default();
+        let address = get_param_any(query, &["ip", "address", "local_address"])
+            .map(url_decode)
+            .unwrap_or_default();
+        let pre_shared_key = get_param_any(query, &["psk", "preSharedKey", "pre_shared_key"])
+            .map(url_decode)
+            .unwrap_or_default();
+        let reserved = get_param_any(query, &["reserved"])
+            .map(|r| {
+                r.split(',')
+                    .filter_map(|x| x.trim().parse::<u8>().ok())
+                    .collect::<Vec<u8>>()
+            })
+            .unwrap_or_default();
+        let mtu = get_param_any(query, &["mtu"])
+            .and_then(|m| m.parse().ok())
+            .unwrap_or(1420);
+        Some(WireGuardInfo {
+            secret_key,
+            address,
+            public_key,
+            endpoint,
+            pre_shared_key,
+            reserved,
+            mtu,
+        })
+    } else {
+        // فرمت JSON بیس۶۴ (قالب v2rayN)
+        let dec = b64decode_str(body)?;
+        let v: serde_json::Value = serde_json::from_str(&dec).ok()?;
+        let secret_key = v["private_key"]
+            .as_str()
+            .or_else(|| v["secretKey"].as_str())?
+            .to_string();
+        let address = v["local_address"]
+            .as_str()
+            .or_else(|| v["address"].as_str())?
+            .to_string();
+        let public_key = v["peer_public_key"]
+            .as_str()
+            .or_else(|| v["publicKey"].as_str())?
+            .to_string();
+        let endpoint = v["peer_endpoint"]
+            .as_str()
+            .or_else(|| v["endpoint"].as_str())?
+            .to_string();
+        let pre_shared_key = v["pre_shared_key"]
+            .as_str()
+            .or_else(|| v["preSharedKey"].as_str())
+            .unwrap_or("")
+            .to_string();
+        let reserved = v["reserved"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_u64().map(|n| n as u8))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mtu = v["mtu"].as_u64().unwrap_or(1420) as u32;
+        Some(WireGuardInfo {
+            secret_key,
+            address,
+            public_key,
+            endpoint,
+            pre_shared_key,
+            reserved,
+            mtu,
+        })
+    }
+}
+
+/// خروجی WireGuard را میسازد.
+fn build_wireguard_outbound(link: &str) -> Option<serde_json::Value> {
+    let i = parse_wireguard(link)?;
+    let addresses: Vec<String> = i
+        .address
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if i.secret_key.is_empty()
+        || addresses.is_empty()
+        || i.public_key.is_empty()
+        || i.endpoint.is_empty()
+    {
+        return None;
+    }
+
+    let mut settings = serde_json::Map::new();
+    settings.insert("secretKey".into(), json!(i.secret_key));
+    settings.insert("address".into(), json!(addresses));
+
+    let mut peer = serde_json::Map::new();
+    peer.insert("publicKey".into(), json!(i.public_key));
+    peer.insert("endpoint".into(), json!(i.endpoint));
+    if !i.pre_shared_key.is_empty() {
+        peer.insert("preSharedKey".into(), json!(i.pre_shared_key));
+    }
+    peer.insert("keepAlive".into(), json!(0));
+    settings.insert("peers".into(), json!([peer]));
+    settings.insert("mtu".into(), json!(i.mtu));
+    if !i.reserved.is_empty() {
+        settings.insert("reserved".into(), json!(i.reserved));
+    }
+
+    Some(json!({
+        "protocol": "wireguard",
+        "settings": settings
     }))
 }
 
@@ -310,38 +943,38 @@ fn build_tun_config(link: &str, metrics: u16) -> Option<String> {
         obj.insert("tag".into(), json!("proxy"));
     }
     let config = json!({
-        "log": { "loglevel": "info" },
-        "stats": {},
-        "policy": {
-            "system": {
-                "statsOutboundUplink": true,
-                "statsOutboundDownlink": true
-            }
-        },
-        "metrics": { "listen": format!("127.0.0.1:{}", metrics) },
-        "dns": {
-            "servers": ["1.1.1.1", "8.8.8.8"]
-        },
-        "inbounds": [
-            {
-                "tag": "tun-in",
-                "protocol": "tun",
-                "settings": {
-    "name": "xray0",
-    "mtu": 1500,
-    "gateway": ["10.0.0.1/30", "fd00::1/126"],
-    "dns": ["1.1.1.1", "8.8.8.8"],
-    "autoSystemRoutingTable": ["0.0.0.0/0", "::/0"],
-    "autoOutboundsInterface": "auto"
-},
-                "sniffing": {
-                    "enabled": true,
-                    "destOverride": ["http", "tls", "quic"]
+            "log": { "loglevel": "info" },
+            "stats": {},
+            "policy": {
+                "system": {
+                    "statsOutboundUplink": true,
+                    "statsOutboundDownlink": true
                 }
-            }
-        ],
-        "outbounds": [o]
-    });
+            },
+            "metrics": { "listen": format!("127.0.0.1:{}", metrics) },
+            "dns": {
+                "servers": ["1.1.1.1", "8.8.8.8"]
+            },
+            "inbounds": [
+                {
+                    "tag": "tun-in",
+                    "protocol": "tun",
+                    "settings": {
+        "name": "xray0",
+        "mtu": 1500,
+        "gateway": ["10.0.0.1/30", "fd00::1/126"],
+        "dns": ["1.1.1.1", "8.8.8.8"],
+        "autoSystemRoutingTable": ["0.0.0.0/0", "::/0"],
+        "autoOutboundsInterface": "auto"
+    },
+                    "sniffing": {
+                        "enabled": true,
+                        "destOverride": ["http", "tls", "quic"]
+                    }
+                }
+            ],
+            "outbounds": [o]
+        });
     Some(config.to_string())
 }
 
@@ -355,13 +988,19 @@ fn notify_wininet() {
             std::ptr::null(),
             0,
         );
-        let _ = InternetSetOptionW(std::ptr::null(), INTERNET_OPTION_REFRESH, std::ptr::null(), 0);
+        let _ = InternetSetOptionW(
+            std::ptr::null(),
+            INTERNET_OPTION_REFRESH,
+            std::ptr::null(),
+            0,
+        );
     }
 }
 
 /// یک پورت آزاد روی ۱۲۷٫۰٫۰٫۱ پیدا می‌کند.
 fn free_port() -> Result<u16, String> {
-    let l = TcpListener::bind("127.0.0.1:0").map_err(|e| format!("خطا در یافتن پورت آزاد: {}", e))?;
+    let l =
+        TcpListener::bind("127.0.0.1:0").map_err(|e| format!("خطا در یافتن پورت آزاد: {}", e))?;
     let p = l.local_addr().map_err(|e| e.to_string())?.port();
     drop(l);
     Ok(p)
@@ -374,7 +1013,10 @@ fn set_proxy(on: bool, ports: Option<&CorePorts>) -> Result<(), String> {
 
     if on {
         let ports = ports.ok_or("پورت‌های اتصال تنظیم نشده‌اند")?;
-        let server = format!("http=127.0.0.1:{};socks=127.0.0.1:{}", ports.http, ports.socks);
+        let server = format!(
+            "http=127.0.0.1:{};socks=127.0.0.1:{}",
+            ports.http, ports.socks
+        );
         key.set_value("ProxyEnable", &1u32)
             .map_err(|e| format!("خطا در فعال‌کردن پروکسی: {}", e))?;
         key.set_value("ProxyServer", &server)
@@ -384,7 +1026,10 @@ fn set_proxy(on: bool, ports: Option<&CorePorts>) -> Result<(), String> {
     } else {
         // فقط اگر خودِ ما پروکسی را روشن کرده باشیم خاموشش کن — به تنظیمات برنامه‌های دیگر دست نزن
         if let Some(ports) = ports {
-            let expected = format!("http=127.0.0.1:{};socks=127.0.0.1:{}", ports.http, ports.socks);
+            let expected = format!(
+                "http=127.0.0.1:{};socks=127.0.0.1:{}",
+                ports.http, ports.socks
+            );
             let ours = key
                 .get_value::<String, _>("ProxyServer")
                 .map(|v| v == expected)
@@ -416,19 +1061,17 @@ fn get_version() -> String {
 }
 #[tauri::command]
 fn get_startup_tun() -> Option<String> {
-    std::env::args()
-        .skip(1)
-        .find_map(|arg| arg.strip_prefix("--tun=").map(|l| l.trim_matches('"').to_string()))
+    std::env::args().skip(1).find_map(|arg| {
+        arg.strip_prefix("--tun=")
+            .map(|l| l.trim_matches('"').to_string())
+    })
 }
 
 /* ================= اجرای هسته ================= */
 
 fn xray_path() -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|_| "خطا در پیدا کردن مسیر برنامه")?;
-    Ok(exe
-        .parent()
-        .ok_or("خطا در مسیر برنامه")?
-        .join("xray.exe"))
+    Ok(exe.parent().ok_or("خطا در مسیر برنامه")?.join("xray.exe"))
 }
 
 fn spawn_xray(config_path: &Path, log_path: &Path) -> Result<Child, String> {
@@ -517,8 +1160,266 @@ fn child_error(mut child: Child, log_path: &Path) -> String {
     }
     reason
 }
+/// آدرس Host را از endpoint به‌دست می‌آورد.
+fn host_from_endpoint(endpoint: &str) -> Option<String> {
+    let e = endpoint.trim().trim_end_matches('/');
 
-fn start_core(link: &str, tun: bool, state: State<'_, AppState>, with_proxy: bool) -> Result<(), String> {
+    // IPv6 مثل [2001:db8::1]:51820
+    if let Some(rest) = e.strip_prefix('[') {
+        let end = rest.find(']')?;
+        return Some(rest[..end].to_string());
+    }
+
+    // IPv4 یا دامنه مثل example.com:443
+    if let Some((host, _port)) = e.rsplit_once(':') {
+        return Some(host.trim_matches('[').trim_matches(']').to_string());
+    }
+
+    if !e.is_empty() {
+        Some(e.to_string())
+    } else {
+        None
+    }
+}
+
+/// آدرس سرور را از انواع کانفیگ‌ها استخراج می‌کند.
+fn endpoint_host(link: &str) -> Option<String> {
+    if link.starts_with("vmess://") {
+        let raw = link.strip_prefix("vmess://")?;
+        let text = String::from_utf8(b64decode(raw)?).ok()?;
+        let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+        return value["add"].as_str().map(|s| s.to_string());
+    }
+
+    if link.starts_with("trojan://") {
+        return Some(parse_trojan(link)?.address);
+    }
+
+    if link.starts_with("ss://") {
+        return Some(parse_ss(link)?.address);
+    }
+
+    if link.starts_with("socks5://") {
+        return Some(parse_simple_proxy(link, "socks5://")?.address);
+    }
+
+    if link.starts_with("http://") {
+        return Some(parse_simple_proxy(link, "http://")?.address);
+    }
+
+    if link.starts_with("wireguard://") || link.starts_with("wg://") {
+        let info = parse_wireguard(link)?;
+        return host_from_endpoint(&info.endpoint);
+    }
+
+    // حالت پیش‌فرض: VLESS
+    Some(parse_vless(link)?.address)
+}
+
+/// آی‌پی‌های IPv4 سرور را Resolve می‌کند.
+fn resolve_endpoint_ipv4(host: &str) -> Vec<String> {
+    use std::net::{IpAddr, ToSocketAddrs};
+
+    let clean = host.trim().trim_start_matches('[').trim_end_matches(']');
+
+    let address = if clean.contains(':') {
+        format!("[{}]:443", clean)
+    } else {
+        format!("{}:443", clean)
+    };
+
+    let mut result = Vec::new();
+
+    if let Ok(addrs) = address.to_socket_addrs() {
+        for addr in addrs {
+            if let IpAddr::V4(ip) = addr.ip() {
+                let value = ip.to_string();
+                if !result.contains(&value) {
+                    result.push(value);
+                }
+            }
+        }
+    }
+
+    result
+}
+
+/// Gateway اصلی اینترنت را از جدول Route ویندوز پیدا می‌کند.
+fn get_default_gateway() -> Option<String> {
+    let output = silent(&mut Command::new("route"))
+        .args(["print", "0.0.0.0"])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let text = String::from_utf8_lossy(&output.stdout);
+
+    for line in text.lines() {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+
+        if parts.len() >= 4 && parts[0] == "0.0.0.0" {
+            let gateway = parts[2];
+
+            if gateway != "0.0.0.0" && gateway != "On-link" && gateway != "10.0.0.1" {
+                return Some(gateway.to_string());
+            }
+        }
+    }
+
+    None
+}
+
+/// شمارهٔ Interface کارت xray0 را از خود ویندوز می‌گیرد.
+fn get_interface_index(name: &str) -> Option<String> {
+    let safe_name = name.replace('\'', "''");
+
+    let script = format!(
+        "(Get-NetAdapter -Name '{}' -ErrorAction Stop).ifIndex",
+        safe_name
+    );
+
+    let output = silent(&mut Command::new("powershell.exe"))
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let text = String::from_utf8_lossy(&output.stdout);
+
+    text.lines()
+        .find_map(|line| line.trim().parse::<u32>().ok())
+        .map(|index| index.to_string())
+}
+/// اجرای بی‌صدای دستورهای سیستمی و بررسی موفقیت آن.
+fn run_silent_command(program: &str, args: &[String]) -> Result<(), String> {
+    let mut command = Command::new(program);
+    command.args(args);
+
+    let status = silent(&mut command)
+        .status()
+        .map_err(|e| format!("خطا در اجرای {}: {}", program, e))?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("دستور {} با خطا متوقف شد", program))
+    }
+}
+
+/// حذف Routeهای TUN.
+fn remove_tun_routes(bypasses: &[String], ifindex: Option<&str>, default_route_added: bool) {
+    if default_route_added {
+        let mut args = vec![
+            "delete".to_string(),
+            "0.0.0.0".to_string(),
+            "mask".to_string(),
+            "0.0.0.0".to_string(),
+            "10.0.0.1".to_string(),
+        ];
+
+        if let Some(index) = ifindex {
+            args.push("if".to_string());
+            args.push(index.to_string());
+        }
+
+        let _ = run_silent_command("route", &args);
+    }
+
+    for ip in bypasses {
+        let args = vec![
+            "delete".to_string(),
+            ip.clone(),
+            "mask".to_string(),
+            "255.255.255.255".to_string(),
+        ];
+
+        let _ = run_silent_command("route", &args);
+    }
+}
+
+/// تنظیم کامل IP و Routeهای کارت TUN.
+fn configure_tun_routes(link: &str) -> Result<(Vec<String>, String), String> {
+    let gateway = get_default_gateway().ok_or("Gateway اصلی اینترنت پیدا نشد")?;
+
+    let host = endpoint_host(link).ok_or("آدرس سرور کانفیگ پیدا نشد")?;
+
+    let server_ips = resolve_endpoint_ipv4(&host);
+
+    if server_ips.is_empty() {
+        return Err("آی‌پی سرور کانفیگ Resolve نشد".into());
+    }
+
+    // دادن IP به کارت xray0
+    let set_ip_args = vec![
+        "interface".to_string(),
+        "ip".to_string(),
+        "set".to_string(),
+        "address".to_string(),
+        "name=xray0".to_string(),
+        "static".to_string(),
+        "10.0.0.1".to_string(),
+        "255.255.255.252".to_string(),
+    ];
+
+    run_silent_command("netsh", &set_ip_args)?;
+
+    std::thread::sleep(Duration::from_millis(500));
+
+    let ifindex = get_interface_index("xray0").ok_or("ifIndex کارت xray0 پیدا نشد")?;
+
+    let mut bypasses = Vec::new();
+
+    // Route مستقیم برای آی‌پی سرور؛ جلوگیری از Loop
+    for ip in &server_ips {
+        let args = vec![
+            "add".to_string(),
+            ip.clone(),
+            "mask".to_string(),
+            "255.255.255.255".to_string(),
+            gateway.clone(),
+        ];
+
+        if let Err(error) = run_silent_command("route", &args) {
+            remove_tun_routes(&bypasses, Some(&ifindex), false);
+            return Err(format!("Route استثنای سرور ساخته نشد: {}", error));
+        }
+
+        bypasses.push(ip.clone());
+    }
+
+    // Route پیش‌فرض از داخل TUN
+    let default_args = vec![
+        "add".to_string(),
+        "0.0.0.0".to_string(),
+        "mask".to_string(),
+        "0.0.0.0".to_string(),
+        "10.0.0.1".to_string(),
+        "if".to_string(),
+        ifindex.clone(),
+        "metric".to_string(),
+        "1".to_string(),
+    ];
+
+    if let Err(error) = run_silent_command("route", &default_args) {
+        remove_tun_routes(&bypasses, Some(&ifindex), false);
+        return Err(format!("Route پیش‌فرض TUN ساخته نشد: {}", error));
+    }
+
+    Ok((bypasses, ifindex))
+}
+
+fn start_core(
+    link: &str,
+    tun: bool,
+    state: State<'_, AppState>,
+    with_proxy: bool,
+) -> Result<(), String> {
     // پورت‌های آزاد برای هر اتصال — تداخل با برنامه‌های دیگر غیرممکن می‌شود
     let l_http = TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
     let l_socks = TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
@@ -526,8 +1427,14 @@ fn start_core(link: &str, tun: bool, state: State<'_, AppState>, with_proxy: boo
     let http = l_http.local_addr().map_err(|e| e.to_string())?.port();
     let socks = l_socks.local_addr().map_err(|e| e.to_string())?.port();
     let metrics = l_metrics.local_addr().map_err(|e| e.to_string())?.port();
-    drop(l_http); drop(l_socks); drop(l_metrics);
-    let ports = CorePorts { http, socks, metrics };
+    drop(l_http);
+    drop(l_socks);
+    drop(l_metrics);
+    let ports = CorePorts {
+        http,
+        socks,
+        metrics,
+    };
 
     let config_json = if tun {
         build_tun_config(link, metrics).ok_or("لینک VLESS معتبر نیست")?
@@ -562,7 +1469,7 @@ fn start_core(link: &str, tun: bool, state: State<'_, AppState>, with_proxy: boo
     let mut child = spawn_xray(&config_path, &log_path)?;
 
     // صبر کن تا هسته واقعاً بالا بیاید (پورت سرویس آمار)
-      if !wait_port(metrics, Duration::from_secs(8)) {
+    if !wait_port(metrics, Duration::from_secs(8)) {
         let reason = child_error(child, &log_path);
         return Err(format!("خطا در شروع اتصال: {}", reason));
     }
@@ -571,17 +1478,30 @@ fn start_core(link: &str, tun: bool, state: State<'_, AppState>, with_proxy: boo
         let reason = child_error(child, &log_path);
         return Err(format!("خطا در شروع اتصال: {}", reason));
     }
-   // در حالت TUN فقط بسته‌شدن واقعی Xray را خطا حساب کن
+    // تنظیم دستی IP و Routeهای TUN
     if tun {
-    // فرصت بده آداپتور TUN کامل ساخته شود
-    std::thread::sleep(Duration::from_millis(1500));
+        std::thread::sleep(Duration::from_millis(1500));
 
-    // اگر Xray واقعاً بسته شده باشد، خطای واقعی لاگ را نمایش بده
-    if let Ok(Some(_)) = child.try_wait() {
-        let reason = child_error(child, &log_path);
-        return Err(format!("خطا در راه‌اندازی TUN: {}", reason));
+        if let Ok(Some(_)) = child.try_wait() {
+            let reason = child_error(child, &log_path);
+            return Err(format!("خطا در راه‌اندازی TUN: {}", reason));
+        }
+
+        let (bypasses, ifindex) = match configure_tun_routes(link) {
+            Ok(value) => value,
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("خطا در تنظیم Routeهای TUN: {}", error));
+            }
+        };
+
+        *state.tun_bypasses.lock().map_err(|e| e.to_string())? = bypasses;
+
+        *state.tun_ifindex.lock().map_err(|e| e.to_string())? = Some(ifindex);
+
+        *state.tun_default_route.lock().map_err(|e| e.to_string())? = true;
     }
-}
 
     if with_proxy {
         if let Err(e) = set_proxy(true, Some(&ports)) {
@@ -620,9 +1540,12 @@ fn proxy_arg(proxy: Option<&str>, args: &mut Vec<String>) {
 /// مدت رفت‌وبرگشت به یک سرورِ سنجش (میلی‌ثانیه) — از داخل پروکسی یا مستقیم.
 fn rtt_ms(proxy: Option<&str>, timeout: u32) -> Result<f64, String> {
     let mut args: Vec<String> = vec![
+        "-4".into(),
         "-s".into(),
         "-o".into(),
         "NUL".into(),
+        "--connect-timeout".into(),
+        "2".into(),
         "--max-time".into(),
         timeout.to_string(),
         "-w".into(),
@@ -634,15 +1557,16 @@ fn rtt_ms(proxy: Option<&str>, timeout: u32) -> Result<f64, String> {
     if !ok {
         return Err("انقضای زمان".into());
     }
-    let secs: f64 = out.trim().parse().map_err(|_| "خروجی نامعتبر".to_string())?;
+    let secs: f64 = out
+        .trim()
+        .parse()
+        .map_err(|_| "خروجی نامعتبر".to_string())?;
     Ok(secs * 1000.0)
 }
 
 /// تست واقعی یک کانفیگ: هسته را با همان کانفیگ روشن می‌کند و از داخل آن پینگ می‌گیرد.
 fn run_test_one(link: &str) -> Result<serde_json::Value, String> {
-    let info = parse_vless(link).ok_or("لینک کانفیگ نامعتبر است")?;
-let outbound = build_outbound(link).ok_or("لینک کانفیگ نامعتبر است")?;
-
+    let outbound = build_outbound(link).ok_or("لینک کانفیگ نامعتبر است")?;
 
     // یک پورت آزاد پیدا کن
     let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
@@ -663,8 +1587,10 @@ let outbound = build_outbound(link).ok_or("لینک کانفیگ نامعتبر 
         "outbounds": [outbound]
     });
 
-    let tmp = std::env::temp_dir().join("nilova_test.json");
-    let tmp_log = std::env::temp_dir().join("nilova_test.log");
+    let tmp = std::env::temp_dir().join(format!("nilova_test_{}.json", port));
+
+    let tmp_log = std::env::temp_dir().join(format!("nilova_test_{}.log", port));
+
     fs::write(&tmp, config.to_string()).map_err(|e| e.to_string())?;
 
     let mut child = match spawn_xray(&tmp, &tmp_log) {
@@ -676,84 +1602,47 @@ let outbound = build_outbound(link).ok_or("لینک کانفیگ نامعتبر 
         }
     };
 
-   // صبر کن تا پورت محلی بالا بیاید؛ اگر هسته از کار افتاد دلیلش را بگو
-if !wait_port(port, Duration::from_secs(2)) {
-    let _ = child.kill();
-    let _ = child.wait();
+    // صبر کن تا پورت محلی بالا بیاید؛ اگر هسته از کار افتاد دلیلش را بگو
+    if !wait_port(port, Duration::from_millis(1500)) {
+        let _ = child.kill();
+        let _ = child.wait();
 
-    let _ = fs::remove_file(&tmp);
-    let _ = fs::remove_file(&tmp_log);
+        let _ = fs::remove_file(&tmp);
+        let _ = fs::remove_file(&tmp_log);
 
-    return Ok(json!({
-        "ok": false,
-        "ms": null,
-        "err": "در دسترس نیست"
-    }));
-}
-
-let proxy = format!("http://127.0.0.1:{}", port);
-
-// مرحله اول: بررسی سلامت واقعی کانفیگ از داخل تونل Xray
-let real_ms = rtt_ms(Some(&proxy), 5).ok();
-
-// مرحله دوم: TCP Ping مستقیم شبیه TCPing در کلاینت‌های دیگر
-let tcp_ms: Option<f64> = if real_ms.is_some() {
-    use std::net::ToSocketAddrs;
-
-    let endpoint = format!("{}:{}", info.address, info.port);
-
-    match endpoint.as_str().to_socket_addrs() {
-        Ok(mut addrs) => {
-            addrs.next().and_then(|socket_addr| {
-                let started = Instant::now();
-
-                TcpStream::connect_timeout(
-                    &socket_addr,
-                    Duration::from_millis(1500),
-                )
-                .ok()?;
-
-                Some(started.elapsed().as_secs_f64() * 1000.0)
-            })
-        }
-        Err(_) => None,
+        return Ok(json!({
+            "ok": false,
+            "ms": null,
+            "err": "در دسترس نیست"
+        }));
     }
-} else {
-    None
-};
 
-// اولویت نمایش:
-// ۱) TCP Ping اگر موجود باشد
-// ۲) Real Delay اگر TCP Ping ممکن نباشد
-let best = tcp_ms.or(real_ms);
+    let proxy = format!("http://127.0.0.1:{}", port);
 
-
+    // فقط تأخیر واقعی درخواست از داخل پروکسی اندازه‌گیری می‌شود.
+    let real_ms = rtt_ms(Some(&proxy), 3).ok();
 
     let _ = child.kill();
     let _ = child.wait();
     let _ = fs::remove_file(&tmp);
     let _ = fs::remove_file(&tmp_log);
 
-    match best {
-    Some(ms) => Ok(json!({
-        "ok": true,
-        "ms": ms.round() as u64,
-        "tcpMs": tcp_ms.map(|v| v.round() as u64),
-        "realMs": real_ms.map(|v| v.round() as u64),
-        "err": null
-    })),
+    match real_ms {
+        Some(ms) => Ok(json!({
+            "ok": true,
+            "ms": ms.round() as u64,
+            "realMs": ms.round() as u64,
+            "err": null
+        })),
 
-    None => Ok(json!({
-        "ok": false,
-        "ms": null,
-        "tcpMs": null,
-        "realMs": null,
-        "err": "در دسترس نیست"
-    })),
-  }
-
+        None => Ok(json!({
+            "ok": false,
+            "ms": null,
+            "realMs": null,
+            "err": "در دسترس نیست"
+        })),
+    }
 }
-
 /* ================= نشانی اینترنتی ================= */
 
 fn fetch_ip_info(proxy: Option<&str>) -> serde_json::Value {
@@ -813,12 +1702,7 @@ fn fetch_ip_info(proxy: Option<&str>) -> serde_json::Value {
 
 fn fetch_stats_json(port: u16) -> Option<serde_json::Value> {
     let url = format!("http://127.0.0.1:{}/debug/vars", port);
-    let args: Vec<String> = vec![
-        "-s".into(),
-        "--max-time".into(),
-        "3".into(),
-        url,
-    ];
+    let args: Vec<String> = vec!["-s".into(), "--max-time".into(), "3".into(), url];
     let (ok, out) = curl_run(&args).ok()?;
     if !ok {
         return None;
@@ -846,9 +1730,7 @@ fn stats_file() -> PathBuf {
 
 fn configs_file() -> PathBuf {
     match std::env::var("APPDATA") {
-        Ok(a) => PathBuf::from(a)
-            .join("Nilova")
-            .join("configs.json"),
+        Ok(a) => PathBuf::from(a).join("Nilova").join("configs.json"),
         Err(_) => PathBuf::from("nilova_configs.json"),
     }
 }
@@ -858,12 +1740,10 @@ fn save_user_data(data: String) -> Result<(), String> {
     let path = configs_file();
 
     if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir)
-            .map_err(|e| format!("خطا در ساخت پوشهٔ تنظیمات: {}", e))?;
+        fs::create_dir_all(dir).map_err(|e| format!("خطا در ساخت پوشهٔ تنظیمات: {}", e))?;
     }
 
-    fs::write(&path, data)
-        .map_err(|e| format!("خطا در ذخیرهٔ تنظیمات: {}", e))?;
+    fs::write(&path, data).map_err(|e| format!("خطا در ذخیرهٔ تنظیمات: {}", e))?;
 
     Ok(())
 }
@@ -872,9 +1752,7 @@ fn save_user_data(data: String) -> Result<(), String> {
 fn load_user_data() -> Result<String, String> {
     match fs::read_to_string(configs_file()) {
         Ok(text) => Ok(text),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            Ok("{}".to_string())
-        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok("{}".to_string()),
         Err(e) => Err(format!("خطا در خواندن تنظیمات: {}", e)),
     }
 }
@@ -950,7 +1828,12 @@ fn rollover(a: &mut TrafficAcc) {
 /* ================= تست سرعت ================= */
 
 /// سرعت انتقال (مگابیت بر ثانیه) از خروجی curl.
-fn transfer_speed(proxy: Option<&str>, url: &str, write_out: &str, timeout: u32) -> Result<f64, String> {
+fn transfer_speed(
+    proxy: Option<&str>,
+    url: &str,
+    write_out: &str,
+    timeout: u32,
+) -> Result<f64, String> {
     let mut args: Vec<String> = vec![
         "-s".into(),
         "-o".into(),
@@ -966,7 +1849,10 @@ fn transfer_speed(proxy: Option<&str>, url: &str, write_out: &str, timeout: u32)
     if !ok {
         return Err("انقضای زمان در تست".into());
     }
-    let bps: f64 = out.trim().parse().map_err(|_| "خروجی نامعتبر".to_string())?;
+    let bps: f64 = out
+        .trim()
+        .parse()
+        .map_err(|_| "خروجی نامعتبر".to_string())?;
     Ok(bps * 8.0 / 1_000_000.0)
 }
 
@@ -1000,7 +1886,10 @@ fn upload_speed(proxy: Option<&str>, bytes: usize) -> Result<f64, String> {
     if !ok {
         return Err("انقضای زمان در تست آپلود".into());
     }
-    let bps: f64 = out.trim().parse().map_err(|_| "خروجی نامعتبر".to_string())?;
+    let bps: f64 = out
+        .trim()
+        .parse()
+        .map_err(|_| "خروجی نامعتبر".to_string())?;
     Ok(bps * 8.0 / 1_000_000.0)
 }
 
@@ -1088,7 +1977,11 @@ fn relaunch_elevated(_link: &str) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn run_tun(link: String, state: State<'_, AppState>, app: tauri::AppHandle) -> Result<String, String> {
+async fn run_tun(
+    link: String,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
     if !is_admin() {
         // اجرای مجدد با دسترسی مدیر — پنجرهٔ UAC از ویندوز خواسته می‌شود
         relaunch_elevated(&link)?;
@@ -1102,16 +1995,44 @@ async fn run_tun(link: String, state: State<'_, AppState>, app: tauri::AppHandle
 
 #[tauri::command]
 async fn stop_xray(state: State<'_, AppState>) -> Result<String, String> {
+    // ابتدا هسته را متوقف می‌کنیم
     let mut guard = state.child.lock().map_err(|e| e.to_string())?;
+
     if let Some(mut child) = guard.take() {
         let _ = child.kill();
         let _ = child.wait();
     }
+
     drop(guard);
+
+    // اطلاعات Routeهای TUN را کپی می‌کنیم
+    let bypasses = state
+        .tun_bypasses
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clone();
+
+    let ifindex = state.tun_ifindex.lock().map_err(|e| e.to_string())?.clone();
+
+    let default_route_added = *state.tun_default_route.lock().map_err(|e| e.to_string())?;
+
+    // پاک‌کردن Routeهای TUN
+    remove_tun_routes(&bypasses, ifindex.as_deref(), default_route_added);
+
+    // پاک‌کردن وضعیت ذخیره‌شده
+    *state.tun_bypasses.lock().map_err(|e| e.to_string())? = Vec::new();
+
+    *state.tun_ifindex.lock().map_err(|e| e.to_string())? = None;
+
+    *state.tun_default_route.lock().map_err(|e| e.to_string())? = false;
+
+    // خاموش‌کردن Proxy ویندوز
     let ports = state.ports.lock().ok().and_then(|g| g.clone());
     let _ = set_proxy(false, ports.as_ref());
+
     *state.ports.lock().map_err(|e| e.to_string())? = None;
-    Ok("اتصال قطع شد؛ پروکسی سیستم ویندوز خاموش شد".into())
+
+    Ok("اتصال قطع شد؛ Routeهای TUN و پروکسی پاک شدند".into())
 }
 
 /// تست پینگ واقعی یک کانفیگ.
@@ -1331,14 +2252,17 @@ fn main() {
             traffic: Mutex::new(TrafficAcc::default()),
             ports: Mutex::new(None),
             log_pos: Mutex::new(0),
+            tun_bypasses: Mutex::new(Vec::new()),
+            tun_default_route: Mutex::new(false),
+            tun_ifindex: Mutex::new(None),
         })
-                     .invoke_handler(tauri::generate_handler![
-    run_xray,
-    run_tun,
-    app_is_admin,
-    get_version,
-    get_startup_tun,
-    stop_xray,
+        .invoke_handler(tauri::generate_handler![
+            run_xray,
+            run_tun,
+            app_is_admin,
+            get_version,
+            get_startup_tun,
+            stop_xray,
             test_one,
             get_ips,
             speed_test,
@@ -1360,6 +2284,24 @@ fn main() {
                     let _ = child.kill();
                     let _ = child.wait();
                 }
+                let bypasses = st
+                    .tun_bypasses
+                    .lock()
+                    .ok()
+                    .map(|g| g.clone())
+                    .unwrap_or_default();
+
+                let ifindex = st.tun_ifindex.lock().ok().and_then(|g| g.clone());
+
+                let default_route_added = st
+                    .tun_default_route
+                    .lock()
+                    .ok()
+                    .map(|g| *g)
+                    .unwrap_or(false);
+
+                remove_tun_routes(&bypasses, ifindex.as_deref(), default_route_added);
+
                 let ports = st.ports.lock().ok().and_then(|g| g.clone());
                 let _ = set_proxy(false, ports.as_ref());
             }
