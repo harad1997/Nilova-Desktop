@@ -85,9 +85,12 @@ struct AppState {
     log_pos: Mutex<u64>,
 
     // Routeهای موقت حالت TUN برای پاک‌سازی هنگام قطع اتصال
-    tun_bypasses: Mutex<Vec<String>>,
+        tun_bypasses: Mutex<Vec<String>>,
     tun_default_route: Mutex<bool>,
     tun_ifindex: Mutex<Option<String>>,
+
+    // ذخیرهٔ نشانی واقعی (بدون تونل) برای نمایش هنگام حالت TUN
+    cached_direct_ip: Mutex<Option<serde_json::Value>>,
 }
 
 const PROXY_OVERRIDE: &str = "<local>";
@@ -2026,6 +2029,8 @@ async fn stop_xray(state: State<'_, AppState>) -> Result<String, String> {
 
     *state.tun_default_route.lock().map_err(|e| e.to_string())? = false;
 
+    *state.cached_direct_ip.lock().map_err(|e| e.to_string())? = None;
+
     // خاموش‌کردن Proxy ویندوز
     let ports = state.ports.lock().ok().and_then(|g| g.clone());
     let _ = set_proxy(false, ports.as_ref());
@@ -2041,6 +2046,16 @@ async fn test_one(link: String) -> Result<serde_json::Value, String> {
     run_test_one(&link)
 }
 
+/// ذخیرهٔ نشانی اینترنتی واقعی (بدون تونل) در حافظه.
+#[tauri::command]
+async fn cache_direct_ip(state: State<'_, AppState>) -> Result<(), String> {
+    let info = fetch_ip_info(None);
+    if let Ok(mut cache) = state.cached_direct_ip.lock() {
+        *cache = Some(info);
+    }
+    Ok(())
+}
+
 /// نشانی اینترنتی از دید سایت‌ها (از داخل پروکسی) و نشانی واقعی (مستقیم).
 #[tauri::command]
 async fn get_ips(mode: u32, state: State<'_, AppState>) -> Result<serde_json::Value, String> {
@@ -2050,14 +2065,28 @@ async fn get_ips(mode: u32, state: State<'_, AppState>) -> Result<serde_json::Va
         .ok()
         .and_then(|g| g.clone())
         .map(|p| format!("http://127.0.0.1:{}", p.http));
+
     let proxy = if mode == 1 {
         None
     } else {
         proxy_str.as_deref()
     };
+
+    // در حالت TUN، نشانی مستقیم از حافظه خوانده می‌شود
+    let direct = if mode == 1 {
+        state
+            .cached_direct_ip
+            .lock()
+            .ok()
+            .and_then(|g| g.clone())
+            .unwrap_or_else(|| fetch_ip_info(None))
+    } else {
+        fetch_ip_info(None)
+    };
+
     Ok(json!({
         "proxy": fetch_ip_info(proxy),
-        "direct": fetch_ip_info(None)
+        "direct": direct
     }))
 }
 
@@ -2255,7 +2284,9 @@ fn main() {
             tun_bypasses: Mutex::new(Vec::new()),
             tun_default_route: Mutex::new(false),
             tun_ifindex: Mutex::new(None),
+            cached_direct_ip: Mutex::new(None),
         })
+
         .invoke_handler(tauri::generate_handler![
             run_xray,
             run_tun,
@@ -2263,6 +2294,7 @@ fn main() {
             get_version,
             get_startup_tun,
             stop_xray,
+                   cache_direct_ip,
             test_one,
             get_ips,
             speed_test,
