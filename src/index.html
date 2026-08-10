@@ -238,6 +238,14 @@ svg.spark{display:block;width:100%;height:92px}
 .row:hover{background:var(--panel-2);transform:translateY(-2px);box-shadow:var(--shadow);border-color:var(--line)}
 .row.on{background:var(--accent-soft);border-color:var(--accent-edge)}
 .fl{width:29px;height:29px;border-radius:8px;flex-shrink:0;display:grid;place-items:center;font-size:9.5px;font-weight:800}
+.flag-img{
+  width:20px;
+  height:14px;
+  object-fit:cover;
+  border-radius:2px;
+  display:inline-block;
+  vertical-align:middle;
+}
 .row .nm{flex:1;min-width:0}
 .row .nm .a{font-size:13.5px;font-weight:600;letter-spacing:-.2px}
 .row .nm .b{font-size:10.5px;color:var(--muted);margin-top:2px}
@@ -245,6 +253,11 @@ svg.spark{display:block;width:100%;height:92px}
 .pr.vless{color:var(--blue);background:color-mix(in srgb, var(--blue) 14%, transparent)}
 .pr.vmess{color:var(--violet);background:color-mix(in srgb, var(--violet) 14%, transparent)}
 .pr.trojan{color:var(--teal);background:color-mix(in srgb, var(--teal) 14%, transparent)}
+.pr.ss{color:var(--blue);background:color-mix(in srgb, var(--blue) 14%, transparent)}
+.pr.socks5{color:var(--violet);background:color-mix(in srgb, var(--violet) 14%, transparent)}
+.pr.http{color:var(--teal);background:color-mix(in srgb, var(--teal) 14%, transparent)}
+.pr.wireguard{color:var(--teal);background:color-mix(in srgb, var(--teal) 14%, transparent)}
+
 /* ---- رنگ‌بندی تأخیر ---- */
 :root{
   --p1:#16a34a;   /* زیر ۱۰۰ — سبز پررنگ */
@@ -1280,9 +1293,11 @@ function getFlag(cc){
     return "🏳️";
   }
 
-  return String.fromCodePoint(
-    ...[...cc].map(ch => ch.charCodeAt(0) + 127397)
-  );
+  return `<img
+    class="flag-img"
+    src="https://flagcdn.com/w20/${cc.toLowerCase()}.png"
+    alt="${cc}"
+    title="${cc}">`;
 }
 
 function flagHtml(cc){
@@ -1472,7 +1487,7 @@ async function copySub(id){
 function parseSubText(text){
   const clean = String(text || "").replace(/^\uFEFF/, "");
   const lines = clean.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-  let links = lines.filter(l => /^(vless|vmess|trojan|ss):\/\//i.test(l));
+  let links = lines.filter(l => /^(vless|vmess|trojan|ss|socks5|http|wireguard|wg):\/\//i.test(l));
   if(!links.length){
     const variants = [clean, clean.replace(/-/g, "+").replace(/_/g, "/")];
     for(const v of variants){
@@ -1480,7 +1495,7 @@ function parseSubText(text){
         const b = v.replace(/\s+/g, "");
         const pad = b.length % 4 ? "=".repeat(4 - b.length % 4) : "";
         const dec = atob(b + pad);
-        links = dec.split(/\r?\n/).map(l => l.trim()).filter(l => /^(vless|vmess|trojan|ss):\/\//i.test(l));
+        links = dec.split(/\r?\n/).map(l => l.trim()).filter(l => /^(vless|vmess|trojan|ss|socks5|http|wireguard|wg):\/\//i.test(l));
         if(links.length) break;
       }catch(e){}
     }
@@ -1606,16 +1621,26 @@ async function pasteCfg(){
 }
 
 function ccFrom(name, host){
-  const flag = [...name].filter(ch => ch >= "\u{1F1E6}" && ch <= "\u{1F1FF}");
-  if(flag.length >= 2)
-    return flag.slice(0,2).map(ch => String.fromCharCode(ch.codePointAt(0) - 0x1F1E6 + 65)).join("");
-  const lat = (name.match(/[A-Za-z]{2}/) || host.match(/[A-Za-z]{2}/) || ["??"])[0];
-  return lat.toUpperCase();
+  const flags = [...String(name || "")].filter(ch => {
+    const n = ch.codePointAt(0);
+    return n >= 0x1F1E6 && n <= 0x1F1FF;
+  });
+
+  if(flags.length >= 2){
+    return flags
+      .slice(0, 2)
+      .map(ch => String.fromCharCode(
+        ch.codePointAt(0) - 0x1F1E6 + 65
+      ))
+      .join("");
+  }
+
+  return "??";
 }
 
 function parseConfig(link){
   const s = link.trim();
-  const proto = (s.match(/^(vless|vmess|trojan|ss):\/\//i) || [])[1];
+  const proto = (s.match(/^(vless|vmess|trojan|ss|socks5|http|wireguard|wg):\/\//i) || [])[1];
   if(!proto) return null;
   const kind = proto.toLowerCase();
   let host = "", port = "", name = "";
@@ -1625,6 +1650,27 @@ function parseConfig(link){
       const j = JSON.parse(atob(s.slice(8).replace(/-/g,"+").replace(/_/g,"/")));
       host = j.add || ""; port = j.port || ""; name = j.ps || "";
     }catch(e){ return null; }
+  }else if(kind === "wireguard" || kind === "wg"){
+    const hash = s.indexOf("#");
+    name = hash > -1 ? decodeURIComponent(s.slice(hash + 1)) : "";
+    const noHash = hash > -1 ? s.slice(0, hash) : s;
+const body = noHash.slice(noHash.indexOf("://") + 3);
+    if(body.indexOf("@") > -1){
+      const hostPart = body.split("?")[0].split("@").pop();
+      const m = hostPart.match(/^\[?([^\]]*)\]?:(\d+)$/) || hostPart.match(/^([^:]+):(\d+)$/);
+      if(!m) return null;
+      host = m[1]; port = m[2];
+    }else{
+      try{
+        const b = body.split("?")[0].replace(/-/g,"+").replace(/_/g,"/");
+        const pad = b.length % 4 ? "=".repeat(4 - b.length % 4) : "";
+        const j = JSON.parse(atob(b + pad));
+        const ep = j.peer_endpoint || j.endpoint || "";
+        const m = ep.match(/^\[?([^\]]*)\]?:(\d+)$/) || ep.match(/^([^:]+):(\d+)$/);
+        if(!m) return null;
+        host = m[1]; port = m[2];
+      }catch(e){ return null; }
+    }
   }else{
     const hash = s.indexOf("#");
     name = hash > -1 ? decodeURIComponent(s.slice(hash + 1)) : "";
@@ -1642,7 +1688,7 @@ name = name.replace(/[\u{1F1E6}-\u{1F1FF}]/gu, "").trim() || `${host}`;
 
 return {cc: ccode, name, host: `${host}:${port}`,
 
-          proto: kind === "ss" ? "trojan" : kind,
+          proto: kind,
           ms: null, sub: "manual"};
 }
 
@@ -1985,11 +2031,6 @@ async function connectNow(){
     return;
   }
 
-  if(!s.raw.startsWith("vless://")){
-    say("cfgHint", "فعلاً فقط کانفیگ VLESS پشتیبانی میشود.", "bad");
-    return;
-  }
-
   connectBusy = true;
 
   const btn = document.getElementById("toggleBtn");
@@ -2144,11 +2185,11 @@ async function refreshIps(){
       const r = await window.__TAURI__.core.invoke("get_ips", { mode: curMode });
       const p = r.proxy || {}, d = r.direct || {};
       if(p.ip){
-        document.getElementById("ipProxyCc").textContent = getFlag(p.cc);
+        document.getElementById("ipProxyCc").innerHTML = getFlag(p.cc);
         document.getElementById("ipProxyV").innerHTML = `${p.ip}${p.city ? ` <em>${p.city}</em>` : ""}`;
       }
       if(d.ip){
-        document.getElementById("ipRealCc").textContent = getFlag(d.cc);
+        document.getElementById("ipRealCc").innerHTML = getFlag(d.cc);
         const parts = d.ip.split(".");
         const masked = parts.length === 4
           ? parts[0] + "." + parts[1] + ".•••.•••"
@@ -2173,27 +2214,64 @@ function testAction(sel){
 
 function clearResults(){
   testStop = true;
-  SERVERS.forEach(s => { s.ms = null; s.err = null; });
-  draw("dash"); draw("all");
+
+  const selectedSub = activeSub;
+
+  SERVERS.forEach(s => {
+    if(s.sub === selectedSub || s.sub === "manual"){
+      s.ms = null;
+      s.err = null;
+    }
+  });
+
+  draw("dash");
+  draw("all");
   updateLive();
 }
 
 async function testAll(){
   testStop = false;
-  for(const s of SERVERS){
-    if(testStop) break;
-    if(!s.raw) continue;
+
+  // اشتراک انتخاب‌شده در شروع تست ثابت می‌ماند
+  const selectedSub = activeSub;
+
+  // فقط کانفیگ‌های اشتراک انتخاب‌شده + کانفیگ‌های دستی
+  const targets = SERVERS.filter(s =>
+    s.sub === selectedSub || s.sub === "manual"
+  );
+
+  const chunkSize = 4;
+
+for(let i = 0; i < targets.length; i += chunkSize){
+  if(testStop) break;
+
+  const chunk = targets.slice(i, i + chunkSize);
+
+  await Promise.all(chunk.map(async s => {
+    if(!s.raw) return;
+
     try{
-      const r = await window.__TAURI__.core.invoke("test_one", { link: s.raw });
+      const r = await window.__TAURI__.core.invoke(
+        "test_one",
+        { link: s.raw }
+      );
+
       s.ms = r.ok ? r.ms : null;
       s.err = r.ok ? null : (r.err || null);
     }catch(e){
       s.ms = null;
       s.err = String(e);
     }
-    draw("dash"); draw("all");
-  }
-  document.querySelectorAll(".testsel").forEach(sel => sel.value = "");
+  }));
+
+  draw("dash");
+  draw("all");
+}
+
+  document.querySelectorAll(".testsel").forEach(sel => {
+    sel.value = "";
+  });
+
   updateLive();
 }
 
