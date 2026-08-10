@@ -20,7 +20,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Format code
-  run: cargo fmt
+        run: cargo fmt
 
       - name: Cargo check
         run: cargo check
