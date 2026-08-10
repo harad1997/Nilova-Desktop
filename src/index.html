@@ -2043,6 +2043,10 @@ async function connectNow(){
   if(isConnected){
     await disconnectNow();
   }
+  // گرفتن نشانی واقعی قبل از روشن‌شدن تونل
+  if(curMode === 1){
+    try { await window.__TAURI__.core.invoke("cache_direct_ip"); } catch(e){}
+  }
 
   try{
     const result = await window.__TAURI__.core.invoke(
