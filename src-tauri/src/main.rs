@@ -1483,7 +1483,7 @@ fn start_core(
     }
     // تنظیم دستی IP و Routeهای TUN
     if tun {
-        std::thread::sleep(Duration::from_millis(1500));
+                std::thread::sleep(Duration::from_millis(800));
 
         if let Ok(Some(_)) = child.try_wait() {
             let reason = child_error(child, &log_path);
@@ -1650,7 +1650,7 @@ fn run_test_one(link: &str) -> Result<serde_json::Value, String> {
 
 fn fetch_ip_info(proxy: Option<&str>) -> serde_json::Value {
     // ۱) ip-api.com — اطلاعات کامل کشور و شهر
-    let mut base: Vec<String> = vec!["-s".into(), "--max-time".into(), "8".into()];
+    let mut base: Vec<String> = vec!["-s".into(), "--max-time".into(), "3".into()];
     proxy_arg(proxy, &mut base);
 
     let mut a1 = base.clone();
