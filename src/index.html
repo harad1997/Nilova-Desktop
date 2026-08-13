@@ -742,36 +742,54 @@ select:focus,input.tin:focus{outline:none;border-color:var(--accent-edge)}
       <div class="grid g-half">
         <div class="card">
           <h2>حالت مسیریابی</h2>
-          <div class="seg">
-            <div class="sg on">قانون‌محور</div>
-            <div class="sg">همه از پروکسی</div>
-            <div class="sg">مستقیم</div>
+                    <div class="seg" id="routeModeSeg">
+            <div class="sg on" data-mode="0">قانون‌محور</div>
+            <div class="sg" data-mode="1">همه از پروکسی</div>
+            <div class="sg" data-mode="2">مستقیم</div>
           </div>
           <div class="mdesc">هر درخواست بر اساس قوانین زیر تصمیم‌گیری می‌شود. اولین قانونی که بخورد، اجرا می‌شود.</div>
         </div>
         <div class="card">
           <h2>میان‌برهای آماده</h2>
-          <div class="set">
+                    <div class="set">
             <div class="t"><div class="a">سایت‌های ایرانی مستقیم</div><div class="b">دامنه‌های ir. و آی‌پی‌های داخل ایران بدون پروکسی</div></div>
-            <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+            <div class="toggle on" id="tgIran" onclick="toggleShortcut('ir')"></div>
           </div>
           <div class="set">
             <div class="t"><div class="a">مسدودکردن تبلیغات</div><div class="b">فهرست دامنه‌های تبلیغاتی و ردیاب</div></div>
-            <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+            <div class="toggle on" id="tgAds" onclick="toggleShortcut('ads')"></div>
           </div>
           <div class="set">
             <div class="t"><div class="a">شبکهٔ محلی مستقیم</div><div class="b">۱۹۲٫۱۶۸ و مانند آن هرگز از پروکسی رد نشود</div></div>
-            <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+            <div class="toggle on" id="tgLan" onclick="toggleShortcut('lan')"></div>
           </div>
         </div>
       </div>
 
-      <div class="panel">
+            <div class="panel">
         <div class="ph">
           <h2>قوانین</h2>
-          <span class="c">۹ قانون فعال</span>
-          <input class="search" placeholder="جستجو در قوانین…">
-          <button class="btn sm">افزودن قانون</button>
+          <span class="c" id="ruleCount">۰ قانون</span>
+          <input class="search" id="ruleSearch" placeholder="جستجو در قوانین…">
+                    <button class="btn sm" onclick="showAddRule()">افزودن قانون</button>
+          <button class="btn sm" onclick="resetRules()">بازنشانی</button>
+        </div>
+        <div style="display:none;gap:8px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--line)" id="addRuleRow">
+          <select id="arType">
+            <option value="DOMAIN-SUFFIX">دامنه (پسوند)</option>
+            <option value="DOMAIN-KEYWORD">دامنه (کلیدواژه)</option>
+            <option value="GEOIP">کشور / GeoIP</option>
+            <option value="IP-CIDR">شبکهٔ IP</option>
+            <option value="PROCESS-NAME">نام برنامه</option>
+          </select>
+          <input id="arVal" placeholder="مقدار، مثل ir یا github.com" style="width:200px;min-width:0">
+          <select id="arAct">
+            <option value="PROXY">از پروکسی</option>
+            <option value="DIRECT">مستقیم</option>
+            <option value="REJECT">مسدود</option>
+          </select>
+          <button class="btn sm g" onclick="addRule()">افزودن</button>
+          <button class="btn sm" onclick="cancelAddRule()">انصراف</button>
         </div>
         <div class="rows h-full" id="ruleRows"></div>
       </div>
@@ -799,15 +817,15 @@ select:focus,input.tin:focus{outline:none;border-color:var(--accent-edge)}
           <h2>عمومی</h2>
           <div class="set">
             <div class="t"><div class="a">اجرا هنگام روشن‌شدن ویندوز</div><div class="b">برنامه در پس‌زمینه بالا می‌آید</div></div>
-            <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+                        <div class="toggle" id="autostartTg" onclick="toggleAutostart(this)"></div>
           </div>
           <div class="set">
             <div class="t"><div class="a">اتصال خودکار</div><div class="b">به آخرین سرور استفاده‌شده وصل شود</div></div>
-            <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+                        <div class="toggle" id="autoTg" onclick="toggleAutoConnect(this)"></div>
           </div>
           <div class="set">
             <div class="t"><div class="a">کوچک‌شدن به سینی</div><div class="b">با بستن پنجره، برنامه بسته نشود</div></div>
-            <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+                        <div class="toggle" id="trayTg" onclick="toggleTray(this)"></div>
           </div>
           <div class="set">
             <div class="t"><div class="a">زبان</div><div class="b">زبان رابط کاربری</div></div>
@@ -1825,25 +1843,190 @@ if(logFilterEl) logFilterEl.addEventListener("input", renderLog);
 /* ---------- شروع ---------- */
 if(SERVERS.length) pickServer(0);
 
-/* ---------- قوانین ---------- */
-const RULES = [
-  ["DOMAIN-SUFFIX","ir","DIRECT","dir"],
-  ["GEOIP","ir","DIRECT","dir"],
-  ["GEOIP","private","DIRECT","dir"],
-  ["DOMAIN-KEYWORD","doubleclick","REJECT","rej"],
-  ["DOMAIN-SUFFIX","googlesyndication.com","REJECT","rej"],
-  ["DOMAIN-SUFFIX","github.com","Nilova","prox"],
-  ["DOMAIN-SUFFIX","openai.com","Nilova","prox"],
-  ["PROCESS-NAME","Telegram.exe","Nilova","prox"],
-  ["MATCH","","Nilova","prox"],
-];
-document.getElementById("ruleRows").innerHTML = RULES.map((r,i)=>`
-  <div class="rule">
-    <span class="no">${i+1}</span>
-    <span class="mt">${r[0]}</span>
-    <span class="vl">${r[1] || "—"}</span>
-    <span class="out ${r[3]}">${r[2]}</span>
-  </div>`).join("");
+/* ---------- قوانین مسیریابی (واقعی) ---------- */
+const routeState = {
+  mode: 0, // 0 = قانون‌محور | 1 = همه از پروکسی | 2 = مستقیم
+  userRules: [],
+  shortcuts: { ir: true, ads: true, lan: true },
+  order: [], // ترتیب نمایش قوانین (کلید هر قانون)
+  disabled: {} // قانون‌های غیرفعال — با کلید قانون
+};
+
+const SHORTCUTS = {
+  ir:  [["DOMAIN-SUFFIX","ir","DIRECT"],["GEOIP","ir","DIRECT"]],
+  ads: [["DOMAIN-KEYWORD","doubleclick","REJECT"],["DOMAIN-SUFFIX","googlesyndication.com","REJECT"]],
+  lan: [["GEOIP","private","DIRECT"],["IP-CIDR","192.168.0.0/16","DIRECT"],["IP-CIDR","10.0.0.0/8","DIRECT"],["IP-CIDR","172.16.0.0/12","DIRECT"]]
+};
+const ruleKey = r => r[0] + "|" + r[1] + "|" + r[2];
+const shortcutEl = k => document.getElementById(k === "ir" ? "tgIran" : (k === "ads" ? "tgAds" : "tgLan"));
+
+function rebuildRules(){
+  let merged = [];
+  for(const k in SHORTCUTS){
+    if(routeState.shortcuts[k]) merged.push(...SHORTCUTS[k]);
+  }
+  merged.push(...routeState.userRules);
+  // اعمال ترتیب ذخیره‌شده
+  if(routeState.order.length){
+    const byKey = {};
+    merged.forEach(r => {
+      const key = ruleKey(r);
+      (byKey[key] = byKey[key] || []).push(r);
+    });
+    merged = [];
+    for(const key of routeState.order){
+      const bucket = byKey[key];
+      if(bucket && bucket.length) merged.push(bucket.shift());
+    }
+    for(const key in byKey) merged.push(...byKey[key]);
+  }
+  routeState.rules = merged;
+  routeState.order = merged.map(ruleKey);
+  renderRules();
+}
+
+function renderRules(){
+  const q = (document.getElementById("ruleSearch").value || "").toLowerCase();
+  const list = routeState.rules.filter(r => String(r[1]).toLowerCase().includes(q));
+  const enabled = routeState.rules.filter(r => !routeState.disabled[ruleKey(r)]).length;
+  document.getElementById("ruleCount").textContent = `${toFa(enabled)} از ${toFa(routeState.rules.length)} فعال`;
+  document.getElementById("ruleRows").innerHTML = list.map(r => {
+    const orig = routeState.rules.indexOf(r);
+    const off = !!routeState.disabled[ruleKey(r)];
+    const outCls = r[2] === "DIRECT" ? "dir" : (r[2] === "REJECT" ? "rej" : "prox");
+    const outTxt = r[2] === "DIRECT" ? "مستقیم" : (r[2] === "REJECT" ? "مسدود" : "پروکسی");
+    return `<div class="rule" ${off ? 'style="opacity:.45"' : ""}>
+      <span class="no">${toFa(orig + 1)}</span>
+      <span class="mt">${r[0]}</span>
+      <span class="vl">${r[1] || "—"}</span>
+      <span class="out ${outCls}">${outTxt}</span>
+      <button style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px" onclick="toggleRule(${orig})" title="${off ? "فعال کردن" : "غیرفعال کردن"}">${off ? "○" : "●"}</button>
+      <button style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px" onclick="moveRule(${orig},-1)" title="بالا">↑</button>
+      <button style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px" onclick="moveRule(${orig},1)" title="پایین">↓</button>
+      <button style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px" onclick="delRule(${orig})" title="حذف">✕</button>
+    </div>`;
+  }).join("") || `<div class="empty">قانونی پیدا نشد.</div>`;
+}
+
+function delRule(i){
+  const r = routeState.rules[i];
+  if(!r) return;
+  delete routeState.disabled[ruleKey(r)];
+  const inUser = routeState.userRules.findIndex(x => x === r);
+  if(inUser !== -1){
+    routeState.userRules.splice(inUser, 1);
+  }else{
+    for(const k in SHORTCUTS){
+      if(SHORTCUTS[k].some(x => ruleKey(x) === ruleKey(r)) && routeState.shortcuts[k]){
+        routeState.shortcuts[k] = false;
+        const el = shortcutEl(k);
+        if(el) el.classList.remove("on");
+      }
+    }
+  }
+  rebuildRules();
+  applyRouteChange();
+}
+function toggleRule(i){
+  const r = routeState.rules[i];
+  if(!r) return;
+  const key = ruleKey(r);
+  if(routeState.disabled[key]) delete routeState.disabled[key];
+  else routeState.disabled[key] = true;
+  renderRules();
+  applyRouteChange();
+}
+function activeRules(){
+  return routeState.rules.filter(r => !routeState.disabled[ruleKey(r)]);
+}
+
+function moveRule(i, dir){
+  const j = i + dir;
+  if(j < 0 || j >= routeState.rules.length) return;
+  const tmp = routeState.rules[i];
+  routeState.rules[i] = routeState.rules[j];
+  routeState.rules[j] = tmp;
+  routeState.order = routeState.rules.map(ruleKey);
+  renderRules();
+  applyRouteChange();
+}
+
+function showAddRule(){ document.getElementById("addRuleRow").style.display = "flex"; }
+function cancelAddRule(){ document.getElementById("addRuleRow").style.display = "none"; }
+function addRule(){
+  const type = document.getElementById("arType").value;
+  const val  = document.getElementById("arVal").value.trim();
+  const act  = document.getElementById("arAct").value;
+  if(!val){ alert("مقدار قانون را بنویس."); return; }
+  routeState.userRules.push([type, val, act]);
+  document.getElementById("arVal").value = "";
+  cancelAddRule();
+  rebuildRules();
+  applyRouteChange();
+}
+function setRouteMode(m){
+  routeState.mode = m;
+  document.querySelectorAll("#routeModeSeg .sg").forEach(x => x.classList.toggle("on", Number(x.dataset.mode) === m));
+  applyRouteChange();
+}
+async function resetRules(){
+  if(!(await askConfirm("همهٔ تغییرات قوانین پاک و به حالت پیش‌فرض برمی‌گردد. ادامه می‌دهی؟"))) return;
+  routeState.mode = 0;                        // قانون‌محور
+  routeState.shortcuts = { ir: true, ads: true, lan: true }; // همهٔ میان‌برها روشن
+  routeState.userRules = [];                  // قوانین دستی پاک
+  routeState.disabled = {};                   // هیچ قانونی غیرفعال نیست
+  routeState.order = [];                      // ترتیب پیش‌فرض
+  document.querySelectorAll("#routeModeSeg .sg").forEach(x => x.classList.toggle("on", Number(x.dataset.mode) === 0));
+  for(const k in routeState.shortcuts){
+    const el = shortcutEl(k);
+    if(el) el.classList.add("on");
+  }
+  rebuildRules();
+  applyRouteChange();
+}
+
+function toggleShortcut(k){
+  routeState.shortcuts[k] = !routeState.shortcuts[k];
+  const el = shortcutEl(k);
+  if(el) el.classList.toggle("on", routeState.shortcuts[k]);
+  rebuildRules();
+  applyRouteChange();
+}
+function applyRouteChange(){
+  saveUserData(); // ذخیرهٔ تنظیمات مسیریابی
+  if(isConnected) connectNow(); // با تنظیمات جدید دوباره وصل شو تا اعمال شود
+}
+document.querySelectorAll("#routeModeSeg .sg").forEach(sg => {
+  sg.addEventListener("click", () => setRouteMode(Number(sg.dataset.mode)));
+});
+document.getElementById("ruleSearch").addEventListener("input", renderRules);
+rebuildRules();
+
+function applyRouteJSON(parsed){
+  const saved = parsed.rules || [];
+  for(const k in routeState.shortcuts) routeState.shortcuts[k] = false;
+  routeState.userRules = [];
+  for(const r of saved){
+    let matched = false;
+    for(const k in SHORTCUTS){
+      if(SHORTCUTS[k].some(x => ruleKey(x) === ruleKey(r))){
+        routeState.shortcuts[k] = true;
+        matched = true;
+      }
+    }
+    if(!matched) routeState.userRules.push(r);
+  }
+  if(typeof parsed.mode === "number") routeState.mode = parsed.mode;
+  routeState.disabled = {};
+  for(const key of (parsed.disabled || [])) routeState.disabled[key] = true;
+  routeState.order = saved.map(ruleKey);
+  for(const k in routeState.shortcuts){
+    const el = shortcutEl(k);
+    if(el) el.classList.toggle("on", routeState.shortcuts[k]);
+  }
+  document.querySelectorAll("#routeModeSeg .sg").forEach(x => x.classList.toggle("on", Number(x.dataset.mode) === routeState.mode));
+  rebuildRules();
+}
 
 /* ---------- ناوبری ---------- */
 const TITLES = {dash:"داشبورد",servers:"سرورها",subs:"اشتراک‌ها",
@@ -1876,6 +2059,42 @@ function toggleLan(el){
   const on = el.classList.contains("on");
   document.getElementById("lanRow").style.display  = on ? "flex" : "none";
   document.getElementById("lanAuth").style.display = on ? "flex" : "none";
+}
+async function toggleAutostart(el){
+  el.classList.toggle("on");
+  const on = el.classList.contains("on");
+  try{
+    await window.__TAURI__.core.invoke("set_autostart", { enabled: on });
+  }catch(e){
+    el.classList.toggle("on");
+    alert("خطا در ذخیرهٔ تنظیم: " + String(e));
+  }
+}
+
+(async function initAutostart(){
+  if(!inTauri) return;
+  try{
+    const on = await window.__TAURI__.core.invoke("get_autostart");
+    const el = document.getElementById("autostartTg");
+    if(el) el.classList.toggle("on", !!on);
+  }catch(_){}
+})();
+function toggleAutoConnect(el){
+  el.classList.toggle("on");
+  autoConnect = el.classList.contains("on");
+  saveUserData();
+}
+async function toggleTray(el){
+  el.classList.toggle("on");
+  minimizeTray = el.classList.contains("on");
+  try{
+    await window.__TAURI__.core.invoke("set_minimize_to_tray", { enabled: minimizeTray });
+    saveUserData();
+  }catch(e){
+    el.classList.toggle("on");
+    minimizeTray = !minimizeTray;
+    alert("خطا در ذخیرهٔ تنظیم: " + String(e));
+  }
 }
 
 async function toggleTunSetting(el){
@@ -2007,6 +2226,11 @@ document.querySelectorAll("#p-route .sg").forEach(sg=>{
   });
 });  /* ---------- حالت اتصال: پروکسی یا TUN ---------- */
   let curMode = 0;
+  let autoConnect = false;      // اتصال خودکار هنگام اجرا
+  let lastMode = 0;             // آخرین حالت (0 پروکسی / 1 TUN)
+  let lastSrvRaw = null;        // آخرین سروری که وصل شد
+  let elevatedConnected = false; // جلوگیری از اتصال دوباره بعد از اجرای ادمین
+  let minimizeTray = false;     // کوچک‌شدن به سینی هنگام بستن
   document.querySelectorAll("#p-dash .sg[data-mode]").forEach(sg=>{
     sg.addEventListener("click",()=>{
       document.querySelectorAll("#p-dash .sg[data-mode]").forEach(x=>x.classList.remove("on"));
@@ -2049,13 +2273,17 @@ async function connectNow(){
   }
 
   try{
+            const route = JSON.stringify({ mode: routeState.mode, rules: activeRules(), disabled: Object.keys(routeState.disabled) });
     const result = await window.__TAURI__.core.invoke(
       curMode === 1 ? "run_tun" : "run_xray",
-      { link: s.raw }
+      { link: s.raw, route: route }
     );
 
     isConnected = true;
     connectedSrv = activeSrv;
+    lastSrvRaw = s.raw;
+    lastMode = curMode;
+    saveUserData();
     updateBtn();
     connStarted = Date.now();
     updateLive();
@@ -2312,13 +2540,19 @@ async function saveUserData(){
       live: s.live !== false
     }));
 
-  const data = JSON.stringify({
+    const data = JSON.stringify({
      manual,
      subs,
      views: {
       dash: CTX.dash.cfg,
       all: CTX.all.cfg
-  }
+  },
+          route: { mode: routeState.mode, rules: routeState.rules, disabled: Object.keys(routeState.disabled) },
+          autoConnect,
+          lastMode,
+          lastSrv: lastSrvRaw || null,
+          minimizeTray,
+
 });
 
   try{
@@ -2337,8 +2571,24 @@ async function loadUserData(){
       if(data.views){
        if(data.views.dash) CTX.dash.cfg = data.views.dash;
        if(data.views.all)  CTX.all.cfg = data.views.all;
-}
 
+}
+    // بازیابی تنظیمات مسیریابی
+    if(data.route){
+      try{ applyRouteJSON(data.route); }catch(_){}
+    }
+    // بازیابی اتصال خودکار
+    if(typeof data.autoConnect === "boolean") autoConnect = data.autoConnect;
+    if(typeof data.lastMode === "number") lastMode = data.lastMode;
+    if(typeof data.lastSrv === "string") lastSrvRaw = data.lastSrv;
+    const at = document.getElementById("autoTg");
+    if(at) at.classList.toggle("on", autoConnect);
+    if(typeof data.minimizeTray === "boolean"){
+      minimizeTray = data.minimizeTray;
+      try{ await window.__TAURI__.core.invoke("set_minimize_to_tray", { enabled: minimizeTray }); }catch(_){}
+      const tt = document.getElementById("trayTg");
+      if(tt) tt.classList.toggle("on", minimizeTray);
+    }
 
 document.getElementById(CTX.dash.vset).innerHTML = vsetHtml("dash");
 document.getElementById(CTX.all.vset).innerHTML = vsetHtml("all");
@@ -2391,6 +2641,21 @@ document.getElementById(CTX.all.vset).innerHTML = vsetHtml("all");
     console.log("اطلاعات قبلی پیدا نشد.");
   }
 }
+async function maybeAutoConnect(){
+  if(!inTauri || !autoConnect || !lastSrvRaw) return;
+  const idx = SERVERS.findIndex(s => s.raw === lastSrvRaw);
+  if(idx < 0) return;
+  activeSrv = idx;
+  curMode = lastMode === 1 ? 1 : 0;
+  pickServer(idx);
+  document.querySelectorAll("#p-dash .sg[data-mode]").forEach(x => x.classList.toggle("on", Number(x.dataset.mode) === curMode));
+  const md = document.getElementById("mdesc");
+  if(md) md.textContent = curMode === 1
+    ? "پوشش کل ترافیک ویندوز — نیازمند اجرا به عنوان مدیر."
+    : "فقط برنامه‌هایی که پروکسی ویندوز را می‌خوانند.";
+  try{ await connectNow(); }catch(_){}
+}
+
 async function autoConnectElevatedTun(){
   if(!inTauri) return;
 
@@ -2420,15 +2685,26 @@ async function autoConnectElevatedTun(){
 
     pickServer(idx);
 
-    // فقط یک بار اتصال را انجام می‌دهد
-    await connectNow();
+      // خواندن تنظیمات مسیریابی ذخیره‌شده از پنجرهٔ قبلی (قبل از اجرای مجدد با مدیر)
+    try{
+      const routeJson = await window.__TAURI__.core.invoke("read_pending_route");
+      if(routeJson){
+        try{ applyRouteJSON(JSON.parse(routeJson)); }catch(_){}
+      }
+    }catch(_){}
+
+   elevatedConnected = true;
+  await connectNow();
 
   }catch(e){
     say("cfgHint", "خطا در اتصال خودکار TUN: " + String(e), "bad");
   }
 }
 
-loadUserData().then(autoConnectElevatedTun);
+loadUserData().then(async () => {
+  await autoConnectElevatedTun();
+  if(!elevatedConnected) await maybeAutoConnect();
+});
 
 </script>
 </body>
