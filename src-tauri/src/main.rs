@@ -10,6 +10,9 @@ use std::time::{Duration, Instant};
 
 use serde_json::json;
 use tauri::{Emitter, Manager, State};
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -95,6 +98,11 @@ struct AppState {
 
 const PROXY_OVERRIDE: &str = "<local>";
 const INTERNET_SETTINGS: &str = r"Software\Microsoft\Windows\CurrentVersion\Internet Settings";
+const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+const RUN_VALUE: &str = "Nilova";
+/// بستن پنجره → مخفی‌شدن در سینی
+static MINIMIZE_TO_TRAY: AtomicBool = AtomicBool::new(false);
+
 
 /* ================= ساخت پیکربندی ================= */
 
@@ -928,57 +936,155 @@ fn finalize(outbound: serde_json::Value, http: u16, socks: u16, metrics: u16) ->
                 "settings": {}
             }
         ],
-        "outbounds": [o]
+                "outbounds": [o, json!({ "protocol": "freedom", "tag": "direct" }), json!({ "protocol": "blackhole", "tag": "block" })]
+
     })
 }
 
 /// پیکربندی حالت پروکسی: ورودی‌های SOCKS و HTTP روی پورت‌های محلی آزاد.
-fn build_config(link: &str, http: u16, socks: u16, metrics: u16) -> Option<String> {
+fn build_config(link: &str, http: u16, socks: u16, metrics: u16, route_str: &str) -> Option<String> {
     let outbound = build_outbound(link)?;
-    Some(finalize(outbound, http, socks, metrics).to_string())
+    let mut config = finalize(outbound, http, socks, metrics);
+    if let Some(obj) = config.as_object_mut() {
+        obj.insert("routing".into(), build_routing(route_str));
+    }
+    Some(config.to_string())
 }
 
 /// پیکربندی حالت TUN: یک آداپتور مجازی که کل ترافیک ویندوز را می‌گیرد.
-fn build_tun_config(link: &str, metrics: u16) -> Option<String> {
+fn build_tun_config(link: &str, metrics: u16, route_str: &str) -> Option<String> {
     let outbound = build_outbound(link)?;
     let mut o = outbound;
     if let Some(obj) = o.as_object_mut() {
         obj.insert("tag".into(), json!("proxy"));
     }
-    let config = json!({
-            "log": { "loglevel": "info" },
-            "stats": {},
-            "policy": {
-                "system": {
-                    "statsOutboundUplink": true,
-                    "statsOutboundDownlink": true
+    let mut config = json!({
+        "log": { "loglevel": "info" },
+        "stats": {},
+        "policy": {
+            "system": {
+                "statsOutboundUplink": true,
+                "statsOutboundDownlink": true
+            }
+        },
+        "metrics": { "listen": format!("127.0.0.1:{}", metrics) },
+        "dns": {
+            "servers": ["1.1.1.1", "8.8.8.8"]
+        },
+        "inbounds": [
+            {
+                "tag": "tun-in",
+                "protocol": "tun",
+                "settings": {
+                    "name": "xray0",
+                    "mtu": 1500,
+                    "gateway": ["10.0.0.1/30", "fd00::1/126"],
+                    "dns": ["1.1.1.1", "8.8.8.8"],
+                    "autoSystemRoutingTable": ["0.0.0.0/0", "::/0"],
+                    "autoOutboundsInterface": "auto"
+                },
+                "sniffing": {
+                    "enabled": true,
+                    "destOverride": ["http", "tls", "quic"]
                 }
-            },
-            "metrics": { "listen": format!("127.0.0.1:{}", metrics) },
-            "dns": {
-                "servers": ["1.1.1.1", "8.8.8.8"]
-            },
-            "inbounds": [
-                {
-                    "tag": "tun-in",
-                    "protocol": "tun",
-                    "settings": {
-        "name": "xray0",
-        "mtu": 1500,
-        "gateway": ["10.0.0.1/30", "fd00::1/126"],
-        "dns": ["1.1.1.1", "8.8.8.8"],
-        "autoSystemRoutingTable": ["0.0.0.0/0", "::/0"],
-        "autoOutboundsInterface": "auto"
-    },
-                    "sniffing": {
-                        "enabled": true,
-                        "destOverride": ["http", "tls", "quic"]
-                    }
-                }
-            ],
-            "outbounds": [o]
-        });
+            }
+        ],
+              "outbounds": [o, json!({ "protocol": "freedom", "tag": "direct" }), json!({ "protocol": "blackhole", "tag": "block" })]
+    });
+    if let Some(obj) = config.as_object_mut() {
+        obj.insert("routing".into(), build_routing(route_str));
+    }
     Some(config.to_string())
+}
+
+/// ساخت بخش routing از حالت و قوانین ارسال‌شده از رابط کاربری.
+/// route_str به شکل JSON: {"mode":0|1|2, "rules":[["DOMAIN-SUFFIX","ir","DIRECT"], ...]}
+fn build_routing(route_str: &str) -> serde_json::Value {
+    let fallback = "proxy";
+
+    let (mode, rules) = if route_str.is_empty() {
+        (0u64, Vec::new())
+    } else if let Ok(v) = serde_json::from_str::<serde_json::Value>(route_str) {
+        let mode = v["mode"].as_u64().unwrap_or(0);
+        let rules = v["rules"]
+            .as_array()
+            .map(|arr| arr.clone())
+            .unwrap_or_default();
+        (mode, rules)
+    } else {
+        (0u64, Vec::new())
+    };
+
+    // حالت «همه از پروکسی» یا «مستقیم»
+    if mode == 1 || mode == 2 {
+        let out = if mode == 1 { "proxy" } else { "direct" };
+        return json!({
+            "domainStrategy": "IPIfNonMatch",
+            "rules": [
+                {
+                    "type": "field",
+                    "outboundTag": out,
+                    "network": "tcp,udp"
+                }
+            ]
+        });
+    }
+
+    let mut xrules: Vec<serde_json::Value> = Vec::new();
+
+    for item in rules.iter() {
+        let arr = match item.as_array() {
+            Some(a) if a.len() >= 3 => a,
+            _ => continue,
+        };
+        let mt = arr[0].as_str().unwrap_or("").to_uppercase();
+        let val = arr[1].as_str().unwrap_or("");
+        let action = arr[2].as_str().unwrap_or("DIRECT").to_uppercase();
+        if val.is_empty() {
+            continue;
+        }
+
+                let outbound = if action == "DIRECT" { "direct" } else if action == "REJECT" { "block" } else { "proxy" };
+        let mut rule = serde_json::Map::new();
+        rule.insert("type".into(), json!("field"));
+        rule.insert("outboundTag".into(), json!(outbound));
+
+        match mt.as_str() {
+            "DOMAIN-SUFFIX" => {
+                rule.insert("domain".into(), json!([format!("domain:{}", val)]));
+            }
+            "DOMAIN-KEYWORD" => {
+                rule.insert("domain".into(), json!([format!("keyword:{}", val)]));
+            }
+            "GEOIP" => {
+                rule.insert("ip".into(), json!([format!("geoip:{}", val)]));
+            }
+            "DOMAIN" => {
+                rule.insert("domain".into(), json!([val.to_string()]));
+            }
+            "IP-CIDR" => {
+                rule.insert("ip".into(), json!([val.to_string()]));
+            }
+            "PROCESS-NAME" => {
+                rule.insert("process".into(), json!([val.to_string()]));
+            }
+            _ => continue,
+        }
+
+        xrules.push(json!(rule));
+    }
+
+    // قانون پایانی: بقیهٔ ترافیک از پروکسی
+    xrules.push(json!({
+        "type": "field",
+        "outboundTag": fallback,
+        "network": "tcp,udp"
+    }));
+
+    json!({
+        "domainStrategy": "IPIfNonMatch",
+        "rules": xrules
+    })
 }
 
 /* ================= پروکسی سیستم ویندوز ================= */
@@ -1047,6 +1153,56 @@ fn set_proxy(on: bool, ports: Option<&CorePorts>) -> Result<(), String> {
     notify_wininet();
     Ok(())
 }
+/// روشن/خاموش کردن اجرای خودکار برنامه هنگام ورود به ویندوز.
+#[tauri::command]
+fn set_autostart(enabled: bool) -> Result<(), String> {
+    if enabled {
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        let path = exe.to_string_lossy().to_string();
+        let (key, _) = HKCU
+            .create_subkey(RUN_KEY)
+            .map_err(|e| format!("خطا در بازکردن رجیستری: {}", e))?;
+        key.set_value(RUN_VALUE, &path)
+            .map_err(|e| format!("خطا در ذخیرهٔ اجرای خودکار: {}", e))?;
+    } else {
+        let (key, _) = HKCU
+            .create_subkey(RUN_KEY)
+            .map_err(|e| format!("خطا در بازکردن رجیستری: {}", e))?;
+        match key.delete_value(RUN_VALUE) {
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(format!("خطا در حذف اجرای خودکار: {}", e)),
+        }
+    }
+    Ok(())
+}
+
+/// آیا اجرای خودکار فعال است؟ (فقط اگر به خودِ این برنامه اشاره کند)
+#[tauri::command]
+fn get_autostart() -> bool {
+    let key = match HKCU.create_subkey(RUN_KEY) {
+        Ok((k, _)) => k,
+        Err(_) => return false,
+    };
+    let value = match key.get_value::<String, _>(RUN_VALUE) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    match std::env::current_exe() {
+        Ok(exe) => value == exe.to_string_lossy().to_string(),
+        Err(_) => !value.is_empty(),
+    }
+}
+#[tauri::command]
+fn set_minimize_to_tray(enabled: bool) -> Result<(), String> {
+    MINIMIZE_TO_TRAY.store(enabled, Ordering::Relaxed);
+    Ok(())
+}
+
+#[tauri::command]
+fn get_minimize_to_tray() -> bool {
+    MINIMIZE_TO_TRAY.load(Ordering::Relaxed)
+}
 
 fn is_admin() -> bool {
     match silent(&mut Command::new("whoami")).arg("/groups").output() {
@@ -1068,6 +1224,19 @@ fn get_startup_tun() -> Option<String> {
         arg.strip_prefix("--tun=")
             .map(|l| l.trim_matches('"').to_string())
     })
+}
+/// مسیر فایل موقت تنظیمات مسیریابی برای انتقال به پنجرهٔ ادمین.
+fn pending_route_path() -> PathBuf {
+    std::env::temp_dir().join("nilova_pending_route.json")
+}
+
+/// خواندن و حذف تنظیمات مسیریابیِ ذخیره‌شده برای اجرای مجدد با مدیر.
+#[tauri::command]
+fn read_pending_route() -> Option<String> {
+    let path = pending_route_path();
+    let data = fs::read_to_string(&path).ok()?;
+    let _ = fs::remove_file(&path);
+    Some(data)
 }
 
 /* ================= اجرای هسته ================= */
@@ -1422,6 +1591,7 @@ fn start_core(
     tun: bool,
     state: State<'_, AppState>,
     with_proxy: bool,
+    route_str: &str,
 ) -> Result<(), String> {
     // پورت‌های آزاد برای هر اتصال — تداخل با برنامه‌های دیگر غیرممکن می‌شود
     let l_http = TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
@@ -1439,10 +1609,10 @@ fn start_core(
         metrics,
     };
 
-    let config_json = if tun {
-        build_tun_config(link, metrics).ok_or("لینک VLESS معتبر نیست")?
+        let config_json = if tun {
+        build_tun_config(link, metrics, route_str).ok_or("لینک VLESS معتبر نیست")?
     } else {
-        build_config(link, http, socks, metrics).ok_or("لینک VLESS معتبر نیست")?
+        build_config(link, http, socks, metrics, route_str).ok_or("لینک VLESS معتبر نیست")?
     };
 
     let exe_dir = std::env::current_exe()
@@ -1934,8 +2104,9 @@ fn run_speedtest(mode: u32, proxy: Option<&str>) -> Result<serde_json::Value, St
 /* ================= دستورات Tauri ================= */
 
 #[tauri::command]
-async fn run_xray(link: String, state: State<'_, AppState>) -> Result<String, String> {
-    start_core(&link, false, state, true)?;
+async fn run_xray(link: String, route: Option<String>, state: State<'_, AppState>) -> Result<String, String> {
+    let route_str = route.unwrap_or_default();
+    start_core(&link, false, state, true, &route_str)?;
     Ok("اتصال برقرار شد؛ پروکسی سیستم ویندوز روشن شد".into())
 }
 
@@ -1982,19 +2153,24 @@ fn relaunch_elevated(_link: &str) -> Result<(), String> {
 #[tauri::command]
 async fn run_tun(
     link: String,
+    route: Option<String>,
     state: State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
+    let route_str = route.unwrap_or_default();
+
     if !is_admin() {
-        // اجرای مجدد با دسترسی مدیر — پنجرهٔ UAC از ویندوز خواسته می‌شود
+        // تنظیمات مسیریابی را قبل از اجرای مجدد در فایل موقت نگه دار
+        let _ = fs::write(pending_route_path(), &route_str);
         relaunch_elevated(&link)?;
-        // نمونهٔ غیرمدیر بسته می‌شود؛ نمونهٔ مدیر با همان کانفیگ TUN را وصل می‌کند
         app.exit(0);
         return Ok("در حال دریافت دسترسی مدیر…".into());
     }
-    start_core(&link, true, state, false)?;
+
+    start_core(&link, true, state, false, &route_str)?;
     Ok("اتصال TUN برقرار شد؛ کل ترافیک ویندوز از طریق پروکسی عبور می‌کند".into())
 }
+
 
 #[tauri::command]
 async fn stop_xray(state: State<'_, AppState>) -> Result<String, String> {
@@ -2276,6 +2452,62 @@ async fn get_traffic(state: State<'_, AppState>) -> Result<serde_json::Value, St
 
 fn main() {
     tauri::Builder::default()
+        .setup(|app| {
+            // آیکون سینی + منوی راست‌کلیک
+            let show_i = MenuItem::with_id(app, "show", "نمایش Nilova", true, None::<&str>)?;
+            let quit_i = MenuItem::with_id(app, "quit", "خروج", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
+
+            let mut tray = TrayIconBuilder::new()
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "show" => {
+                        if let Some(w) = app.get_webview_window("main") {
+                            let _ = w.show();
+                            let _ = w.unminimize();
+                            let _ = w.set_focus();
+                        }
+                    }
+                    "quit" => app.exit(0),
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        let app = tray.app_handle();
+                        if let Some(w) = app.get_webview_window("main") {
+                            if w.is_visible().unwrap_or(false) {
+                                let _ = w.hide();
+                            } else {
+                                let _ = w.show();
+                                let _ = w.set_focus();
+                            }
+                        }
+                    }
+                });
+
+            if let Some(icon) = app.default_window_icon() {
+                tray = tray.icon(icon.clone());
+            }
+
+            tray.build(app)?;
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            // اگر «کوچک‌شدن به سینی» فعال باشد، بستن فقط مخفی می‌کند
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if MINIMIZE_TO_TRAY.load(Ordering::Relaxed) {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
+
         .manage(AppState {
             child: Mutex::new(None),
             traffic: Mutex::new(TrafficAcc::default()),
@@ -2292,7 +2524,12 @@ fn main() {
             run_tun,
             app_is_admin,
             get_version,
+            set_autostart,
+            get_autostart,
+            set_minimize_to_tray,
+            get_minimize_to_tray,
             get_startup_tun,
+            read_pending_route,
             stop_xray,
                    cache_direct_ip,
             test_one,
